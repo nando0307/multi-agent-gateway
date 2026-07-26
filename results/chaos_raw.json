@@ -1,0 +1,71 @@
+[
+  {
+    "p": 0.1,
+    "n": 1000,
+    "fault_model": "sticky",
+    "local_fail": 0.02,
+    "baseline_failure_pct": 8.6,
+    "baseline_ci": [
+      7.02,
+      10.5
+    ],
+    "gateway_failure_pct": 0.0,
+    "gateway_ci": [
+      0.0,
+      0.38
+    ],
+    "gateway_mean_fallback_depth": 0.1,
+    "gateway_provider_share": {
+      "gemini": 914,
+      "nim": 73,
+      "ollama": 1,
+      "openrouter": 12
+    }
+  },
+  {
+    "p": 0.3,
+    "n": 1000,
+    "fault_model": "sticky",
+    "local_fail": 0.02,
+    "baseline_failure_pct": 31.2,
+    "baseline_ci": [
+      28.4,
+      34.14
+    ],
+    "gateway_failure_pct": 0.0,
+    "gateway_ci": [
+      0.0,
+      0.38
+    ],
+    "gateway_mean_fallback_depth": 0.412,
+    "gateway_provider_share": {
+      "gemini": 688,
+      "nim": 235,
+      "openrouter": 54,
+      "ollama": 23
+    }
+  },
+  {
+    "p": 0.5,
+    "n": 1000,
+    "fault_model": "sticky",
+    "local_fail": 0.02,
+    "baseline_failure_pct": 52.4,
+    "baseline_ci": [
+      49.3,
+      55.48
+    ],
+    "gateway_failure_pct": 0.1,
+    "gateway_ci": [
+      0.02,
+      0.56
+    ],
+    "gateway_mean_fallback_depth": 0.886,
+    "gateway_provider_share": {
+      "gemini": 476,
+      "nim": 267,
+      "ollama": 106,
+      "openrouter": 150
+    }
+  }
+]
