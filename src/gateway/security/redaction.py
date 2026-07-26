@@ -25,7 +25,22 @@ PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"AIza[0-9A-Za-z_\-]{20,}"),             # Google / Gemini
     re.compile(r"sk-[A-Za-z0-9]{20,}"),                 # OpenAI-style
     re.compile(r"tvly-[A-Za-z0-9_\-]{16,}"),            # Tavily
-    re.compile(r"(?i)\b(authorization|api[-_ ]?key|bearer)\b\s*[:=]\s*\S+"),
+]
+
+#: (pattern, replacement) where the label is kept and only the value is masked, so a
+#: redacted log still shows *which* credential was involved.
+LABELLED: list[tuple[re.Pattern[str], str]] = [
+    (
+        re.compile(
+            r"""(?ix)
+            ( ["']? \b (?: authorization | api[-_\ ]?key | apikey | bearer
+                          | token | secret | password ) \b ["']? \s* [:=] \s* ["']? )
+            (?: Bearer \s+ )?
+            ( [A-Za-z0-9._\-]{6,} )
+            """
+        ),
+        r"\1" + MASK,
+    ),
 ]
 
 _extra_values: set[str] = set()
@@ -55,6 +70,8 @@ def redact(text: str) -> str:
         text = text.replace(value, MASK)
     for pattern in PATTERNS:
         text = pattern.sub(MASK, text)
+    for pattern, replacement in LABELLED:
+        text = pattern.sub(replacement, text)
     return text
 
 

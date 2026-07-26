@@ -39,6 +39,11 @@ class Settings(BaseSettings):
 
     ollama_api_base: str = "http://localhost:11434"
     ollama_model: str = "ollama_chat/qwen3.5:9b"
+    # The local tier needs its own budget. A timeout tuned for a hosted flash model kills
+    # local inference outright -- the terminal tier would then fail on every request, which
+    # is the opposite of what it is there for. Measured: a cold 9B load plus a reasoning
+    # preamble runs well past 45s on a laptop.
+    ollama_timeout_s: float = 300.0
 
     # --- tools -------------------------------------------------------------------
     tavily_api_key: str | None = None

@@ -1,0 +1,4 @@
+No known vulnerabilities found
+Name                Skip Reason
+------------------- ----------------------------------------------------------------------------------
+multi-agent-gateway Dependency not found on PyPI and could not be audited: multi-agent-gateway (0.1.0)

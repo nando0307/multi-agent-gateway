@@ -53,7 +53,12 @@ def provider_params(name: str, settings: Settings) -> dict[str, Any] | None:
         return {"model": settings.openrouter_model, "api_key": settings.openrouter_api_key}
     if name == "ollama":
         # No key required; availability is a liveness question, answered by the smoke test.
-        return {"model": settings.ollama_model, "api_base": settings.ollama_api_base}
+        # Carries its own timeout -- see Settings.ollama_timeout_s.
+        return {
+            "model": settings.ollama_model,
+            "api_base": settings.ollama_api_base,
+            "timeout": settings.ollama_timeout_s,
+        }
     raise KeyError(f"unknown provider {name!r}")
 
 
@@ -78,7 +83,8 @@ def build_model_list(
         entries.append(
             {
                 "model_name": name,
-                "litellm_params": {**params, "timeout": settings.request_timeout_s},
+                # A per-provider timeout in params wins over the global default.
+                "litellm_params": {"timeout": settings.request_timeout_s, **params},
                 "model_info": {"id": name, "provider": name, "chain_index": tier},
             }
         )
@@ -91,11 +97,12 @@ def build_model_list(
 
     head = effective[0]
     head_params = provider_params(head, settings)
-    assert head_params is not None
+    if head_params is None:  # unreachable: `effective` only holds configured providers
+        raise RuntimeError(f"provider {head!r} lost its credentials mid-build")
     entries.append(
         {
             "model_name": PRIMARY_ALIAS,
-            "litellm_params": {**head_params, "timeout": settings.request_timeout_s},
+            "litellm_params": {"timeout": settings.request_timeout_s, **head_params},
             "model_info": {"id": f"primary::{head}", "provider": head, "chain_index": 0},
         }
     )

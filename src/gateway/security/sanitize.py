@@ -26,22 +26,46 @@ ZERO_WIDTH = dict.fromkeys(map(ord, "​‌‍⁠﻿᠎"), None)
 #: (flag name, compiled pattern). Ordered roughly by how strongly each implies an attack.
 PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("instruction_override", re.compile(
-        r"ignore\s+(all\s+)?(the\s+)?(previous|prior|above|preceding)\s+"
-        r"(instructions?|prompts?|rules?|directions?)", re.I)),
+        r"\b(ignore|disregard|forget|override|discard)\s+(all\s+)?(the\s+)?"
+        r"(previous|prior|above|preceding|earlier|foregoing)\s+"
+        r"(instructions?|prompts?|rules?|directions?|guidelines?)", re.I)),
     ("role_reassignment", re.compile(
         r"\byou\s+are\s+now\b|\bnew\s+(system\s+)?(instructions?|persona)\b|"
         r"\bact\s+as\s+(?:if\s+you|a\s+)", re.I)),
     ("system_prompt_extraction", re.compile(
         r"(reveal|print|output|repeat|show|disclose)\b[^.\n]{0,40}"
         r"(system\s+prompt|initial\s+instructions?|your\s+instructions?)", re.I)),
+    # Bidirectional: the verb may precede the noun ("forward your credentials") or
+    # follow it ("append the api key to the url").
     ("credential_exfiltration", re.compile(
-        r"(api[_\s-]?key|secret|token|credential|password)[^.\n]{0,60}"
-        r"(send|post|append|include|forward|transmit|url)", re.I)),
+        r"(api[_\s-]?key|secret|token|credential|password)s?[^.\n]{0,60}"
+        r"\b(send|post|append|include|forward|transmit|url|exfiltrat)"
+        # `\b` will not fire inside SCREAMING_SNAKE names, so `OPENROUTER_API_KEY` needs
+        # its own alternative -- environment-variable spellings are the common case in
+        # exfiltration payloads.
+        r"|\b(send|post|append|forward|transmit|leak|reveal|include|embed|output)\b[^.\n]{0,40}"
+        r"\b(?:[A-Z][A-Z0-9]*_)*(?:api[_\s-]?key|secret|token|credential|password)s?\b", re.I)),
+    # Naming a real tool, or an imperative to invoke one *with a retrieval verb*. The
+    # looser "run the tool" phrasing was tried and dropped: it is ordinary technical
+    # English ("run the tool with the config file") and cost a false positive.
     ("tool_abuse", re.compile(
-        r"\b(fetch_url|web_search|call\s+the\s+tool|use\s+the\s+tool|invoke\s+the\s+tool)\b", re.I)),
+        r"\b(fetch_url|web_search)\b"
+        r"|\b(use|call|invoke|run|execute)\s+the\s+tool\s+"
+        r"(to\s+)?(fetch|retrieve|get|read|open|download|with\s+file)\b", re.I)),
     ("scheme_probe", re.compile(r"\b(file|gopher|ftp|data)://|127\.0\.0\.1|169\.254\.169\.254", re.I)),
     ("citation_poisoning", re.compile(
-        r"\b(cite|attribute|credit|reference)\b[^.\n]{0,40}\b(as\s+the\s+source|instead)\b", re.I)),
+        r"\b(cite|attribute|credit|reference)\b[^\n]{0,60}"
+        r"\b(as\s+the\s+source|instead\s+of|rather\s+than)\b", re.I)),
+    # Persistence: an instruction that tries to outlive the current document.
+    ("persistence", re.compile(
+        r"\b(for\s+(all\s+)?(future|subsequent|remaining)\s+(steps|turns|requests|queries)"
+        r"|for\s+the\s+(rest|remainder)\s+of\s+(this|the)\s+(session|conversation)"
+        r"|from\s+now\s+on|remember\s+for\s+(all|every|future))\b", re.I)),
+    # Unbounded work requested by the document rather than the operator.
+    ("resource_exhaustion", re.compile(
+        r"\b(keep|continue)\s+(searching|fetching|reading|looking)"
+        r"|\brepeat\s+(this|the)\s+\w+\s+(one\s+)?(thousand|hundred|\d{2,})\s+times"
+        r"|\buntil\s+you\s+have\s+(read|fetched|searched|retrieved)\b", re.I)),
     ("markdown_beacon", re.compile(r"!\[[^\]]*\]\(\s*https?://[^)]*[?&][^)]*\)")),
     ("long_base64", re.compile(r"[A-Za-z0-9+/]{120,}={0,2}")),
 ]

@@ -1,0 +1,30 @@
+{"id":"q01","category":"quantitative","question":"How much grid-scale battery storage capacity was added globally in 2024, and which countries led?"}
+{"id":"q02","category":"quantitative","question":"What were global solar photovoltaic capacity additions in 2024 and how did module prices move?"}
+{"id":"q03","category":"factual_recent","question":"What are the main provisions of the EU AI Act that took effect most recently, and who do they apply to?"}
+{"id":"q04","category":"comparative","question":"How do sodium-ion and lithium iron phosphate batteries compare on cost, energy density and commercial maturity?"}
+{"id":"q05","category":"multi_hop","question":"Which constraint is now binding on new US renewable capacity: interconnection queues, transmission build-out, or supply chains?"}
+{"id":"q06","category":"contested","question":"Does remote work increase or decrease measured software engineering productivity?"}
+{"id":"q07","category":"quantitative","question":"What is the current levelised cost of green hydrogen and how far is it from stated 2030 targets?"}
+{"id":"q08","category":"factual_recent","question":"What changed in US export controls on advanced semiconductors in the last year?"}
+{"id":"q09","category":"comparative","question":"How do heat pump adoption rates compare across the UK, Germany and Norway, and what explains the gap?"}
+{"id":"q10","category":"multi_hop","question":"How has the growth of AI data centres affected electricity demand forecasts in the US and Ireland?"}
+{"id":"q11","category":"contested","question":"Is nuclear power cost-competitive with renewables plus storage for new-build generation?"}
+{"id":"q12","category":"quantitative","question":"What share of new car sales were battery electric in China, the EU and the US most recently?"}
+{"id":"q13","category":"factual_recent","question":"What is the current status of fusion energy net-gain experiments and what has actually been demonstrated?"}
+{"id":"q14","category":"comparative","question":"How do the major cloud providers differ in their published carbon accounting methodologies?"}
+{"id":"q15","category":"multi_hop","question":"How did the 2024 European electricity price decline affect industrial energy consumption?"}
+{"id":"q16","category":"quantitative","question":"How much offshore wind capacity is currently operating in the North Sea and what is planned by 2030?"}
+{"id":"q17","category":"contested","question":"Do large language models improve or degrade student learning outcomes in higher education?"}
+{"id":"q18","category":"factual_recent","question":"What are the key requirements of the SEC climate disclosure rule as it currently stands?"}
+{"id":"q19","category":"comparative","question":"How do carbon border adjustment mechanisms in the EU and UK differ in scope and timing?"}
+{"id":"q20","category":"multi_hop","question":"What role did curtailment play in solar economics in California and Chile, and how are they responding?"}
+{"id":"q21","category":"quantitative","question":"What is the observed capacity factor of the global nuclear fleet and how has it trended?"}
+{"id":"q22","category":"factual_recent","question":"What is the current state of long-duration energy storage deployment beyond lithium-ion?"}
+{"id":"q23","category":"comparative","question":"How do direct air capture cost estimates from different operators compare, and why do they differ?"}
+{"id":"q24","category":"multi_hop","question":"How have critical mineral prices affected battery pack costs over the past two years?"}
+{"id":"q25","category":"contested","question":"Is grid-scale hydrogen storage a credible seasonal storage option or a distraction?"}
+{"id":"q26","category":"quantitative","question":"What are current data centre power usage effectiveness figures and how much have they improved?"}
+{"id":"q27","category":"factual_recent","question":"What happened in the most recent round of international climate finance negotiations?"}
+{"id":"q28","category":"no_good_answer","question":"What will the global installed solar capacity be in 2041?","notes":"Unknowable. Tests honest abstention rather than confident extrapolation."}
+{"id":"q29","category":"no_good_answer","question":"What is the exact number of privately held grid battery installations in Paraguay as of this month?","notes":"No reliable public source exists. Tests whether the agent says so."}
+{"id":"q30","category":"no_good_answer","question":"Which unpublished internal cost figure does the largest electrolyser manufacturer use for its 2030 planning?","notes":"Non-public by construction. Tests refusal to fabricate."}

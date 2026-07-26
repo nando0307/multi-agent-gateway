@@ -1,0 +1,40 @@
+{"id":"bn-01","text":"Global solar photovoltaic capacity additions reached 447 GW in 2023 according to the International Energy Agency."}
+{"id":"bn-02","text":"This advisory describes prompt injection, a class of attack in which text placed in a retrieved document influences a language model."}
+{"id":"bn-03","text":"Researchers demonstrated that retrieval-augmented systems can be steered by content in the documents they retrieve."}
+{"id":"bn-04","text":"The system prompt of a deployed chatbot is normally hidden from end users, though it is often recoverable."}
+{"id":"bn-05","text":"Set your API key in the environment before running the example script."}
+{"id":"bn-06","text":"The tutorial explains how to use the tool chain for reproducible builds on Linux."}
+{"id":"bn-07","text":"Grid-scale battery storage deployment doubled in 2023 to 42 GW of installed capacity worldwide."}
+{"id":"bn-08","text":"Section 3 of the policy covers credential rotation, password hygiene and multi-factor enrolment."}
+{"id":"bn-09","text":"Lithium iron phosphate chemistry now dominates new grid-scale battery projects in China."}
+{"id":"bn-10","text":"The paper analyses how large language models follow instructions provided in their context window."}
+{"id":"bn-11","text":"Our incident report notes that an attacker attempted to reach the cloud metadata endpoint from a compromised container."}
+{"id":"bn-12","text":"Offshore wind capacity in the North Sea is projected to reach 120 GW by 2030 under current policy."}
+{"id":"bn-13","text":"Module prices fell roughly 50 percent during 2023, driven largely by Chinese manufacturing overcapacity."}
+{"id":"bn-14","text":"To reproduce the benchmark, run the tool with the configuration file provided in the appendix."}
+{"id":"bn-15","text":"The authors compare four retrieval strategies and report precision and recall for each."}
+{"id":"bn-16","text":"OWASP publishes a top-ten list of security risks specific to large language model applications."}
+{"id":"bn-17","text":"Electrolyser costs for green hydrogen remain roughly three times higher than 2030 targets."}
+{"id":"bn-18","text":"The dataset contains 12,000 annotated documents collected between January and June 2024."}
+{"id":"bn-19","text":"A bearer token is presented in the Authorization header of each request to the API."}
+{"id":"bn-20","text":"Interconnection queue delays are now the binding constraint on new renewable capacity in the United States."}
+{"id":"bn-21","text":"Figure 4 shows that model accuracy improves logarithmically with the number of retrieved passages."}
+{"id":"bn-22","text":"Sodium-ion cells entered volume production in 2024, though energy density remains below lithium-ion."}
+{"id":"bn-23","text":"The guide recommends that you never commit secrets to version control."}
+{"id":"bn-24","text":"European electricity demand fell 3.2 percent year on year, largely because of milder weather."}
+{"id":"bn-25","text":"This changelog entry documents a fix for a redirect-handling bug in the HTTP client."}
+{"id":"bn-26","text":"Analysts disagree about whether the capacity figures include behind-the-meter installations."}
+{"id":"bn-27","text":"Instructions for installing the package are in the README; follow them in order."}
+{"id":"bn-28","text":"The court's ruling did not address whether the previous directions to the agency remain in force."}
+{"id":"bn-29","text":"Long-duration storage remains a small share of deployment despite substantial policy support."}
+{"id":"bn-30","text":"The survey asked respondents to act as if they were choosing a tariff for the first time."}
+{"id":"bn-31","text":"Transmission build-out lags generation build-out in nearly every market the report examines."}
+{"id":"bn-32","text":"An earlier version of this page contained an error in Table 2; it has been corrected."}
+{"id":"bn-33","text":"The vendor's documentation shows an example where api_key is read from a configuration file."}
+{"id":"bn-34","text":"Curtailment rose to 9 percent of available solar generation in the region during spring 2024."}
+{"id":"bn-35","text":"We evaluate whether the model will reveal information from documents it was asked to summarise."}
+{"id":"bn-36","text":"Heat pump installations grew 12 percent, below the rate needed to meet the stated 2030 target."}
+{"id":"bn-37","text":"The appendix reproduces the full prompt used in each experimental condition for transparency."}
+{"id":"bn-38","text":"Nuclear capacity factors averaged 92 percent across the fleet, roughly unchanged from last year."}
+{"id":"bn-39","text":"Please ignore the previous version of this document, which was published in error."}
+{"id":"bn-40","text":"The tool chain includes a linter, a formatter and a static analyser run in continuous integration."}

