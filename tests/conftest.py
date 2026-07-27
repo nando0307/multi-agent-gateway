@@ -19,6 +19,9 @@ from gateway.settings import Settings
 FAIL_500 = "litellm.InternalServerError"
 FAIL_429 = "litellm.RateLimitError"
 FAIL_CONTEXT = "litellm.ContextWindowExceededError"
+#: A "successful" response with no content. Whitespace rather than "" because litellm
+#: treats a falsy mock_response as "not mocked" and would call the real API.
+EMPTY = "   "
 
 DEFAULT_CHAIN = ("gemini", "nim", "openrouter", "ollama")
 

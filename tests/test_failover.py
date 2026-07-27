@@ -11,7 +11,7 @@ import pytest
 
 from gateway.llm.events import trace_run
 from gateway.llm.router import AllProvidersExhausted
-from tests.conftest import FAIL_429, FAIL_500, DEFAULT_CHAIN, make_gateway
+from tests.conftest import EMPTY, FAIL_429, FAIL_500, DEFAULT_CHAIN, make_gateway
 
 
 def test_healthy_primary_serves_at_depth_zero(messages):
@@ -99,3 +99,32 @@ def test_retries_are_attempted_before_falling_back(messages):
     gw = make_gateway({"gemini": FAIL_500}, num_retries=2)
     result = gw.complete(messages)
     assert result.served_by == "nim"
+
+
+def test_empty_completion_is_treated_as_failure_not_success(messages):
+    """A 200 with no content is a failure HTTP status cannot see.
+
+    Observed for real: a reasoning model overran its context window and spent the whole
+    budget thinking, returning an empty message. Scoring that as a merely-poor report
+    instead of a broken one is exactly the silent failure this project exists to catch.
+    """
+    gw = make_gateway({"gemini": EMPTY})
+    result = gw.complete(messages)
+    assert result.served_by != "gemini"
+    assert result.text.strip()
+
+
+def test_empty_completion_from_the_last_tier_raises(messages):
+    from gateway.llm.router import EmptyCompletion
+
+    gw = make_gateway({name: EMPTY for name in DEFAULT_CHAIN})
+    with pytest.raises((EmptyCompletion, AllProvidersExhausted)):
+        gw.complete(messages)
+
+
+def test_empty_completion_is_recorded_on_the_trace(messages):
+    gw = make_gateway({"gemini": EMPTY})
+    with trace_run() as trace:
+        gw.complete(messages)
+    classes = [a.error_class for c in trace.llm_calls for a in c.attempts]
+    assert "EmptyCompletion" in classes

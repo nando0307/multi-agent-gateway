@@ -80,6 +80,7 @@ def provider_params(name: str, settings: Settings) -> dict[str, Any] | None:
             "model": settings.ollama_model,
             "api_base": settings.ollama_api_base,
             "timeout": settings.ollama_timeout_s,
+            "num_ctx": settings.ollama_num_ctx,
         }
     raise KeyError(f"unknown provider {name!r}")
 

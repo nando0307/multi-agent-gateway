@@ -1,4 +1,4 @@
-"""Phase 6 hard gate: does the judge track a human?
+"""Phase 6: does the judge track an independent reference rater?
 
 Two modes, deliberately separated so the labelling is not contaminated:
 
@@ -12,9 +12,16 @@ Two modes, deliberately separated so the labelling is not contaminated:
         Reads the filled sheet, scores the same reports with the judge, and writes
         results/judge_agreement.md.
 
+The reference rater may be a human or a second model, and **which one it was changes what
+the number means**:
+
+  human   -- validates the judge against human judgement. This is the real Phase 6 gate.
+  model   -- inter-rater agreement between two models. Useful, and a strong second rater
+             catches a weak judge, but two models can agree because they share a blind
+             spot. Passing does NOT close the human gate, and the report says so.
+
 If Spearman rho comes out below ~0.6 the rubric is broken and the provider matrix is
-measuring noise. Fix the rubric before running Phase 7 -- that is what makes this a gate
-rather than a formality.
+measuring noise, regardless of rater type.
 """
 
 from __future__ import annotations
@@ -131,7 +138,17 @@ def cmd_score(args) -> int:
         print("no label sheet; run `judge_agreement.py generate` first", file=sys.stderr)
         return 2
     labels = [json.loads(line) for line in SHEET.read_text().splitlines() if line.strip()]
-    filled = [x for x in labels if x.get("human_depth") and x.get("human_coherence")]
+
+    # Accept either key naming, and infer the rater type from it unless overridden. The
+    # distinction is not cosmetic: it decides whether this closes the Phase 6 human gate.
+    def pick(row, dim):
+        return row.get(f"human_{dim}") or row.get(f"model_{dim}")
+
+    inferred = "model" if any("model_depth" in x for x in labels) else "human"
+    rater_type = args.rater_type or inferred
+    rater_name = args.rater or ("reference model" if rater_type == "model" else "human labeller")
+
+    filled = [x for x in labels if pick(x, "depth") and pick(x, "coherence")]
     if len(filled) < 3:
         print(f"only {len(filled)} rows labelled; fill datasets/human_labels.jsonl first",
               file=sys.stderr)
@@ -151,13 +168,15 @@ def cmd_score(args) -> int:
         print(f"judging {item['label_id']}...", flush=True)
         rows.append({
             **item,
+            "ref_depth": float(pick(item, "depth")),
+            "ref_coherence": float(pick(item, "coherence")),
             "judge_depth": judge.depth(report["question"], report["report"]).score,
             "judge_coherence": judge.coherence(report["question"], report["report"]).score,
         })
 
     out = {}
     for dim in ("depth", "coherence"):
-        human = [float(r[f"human_{dim}"]) for r in rows]
+        human = [float(r[f"ref_{dim}"]) for r in rows]
         model = [float(r[f"judge_{dim}"]) for r in rows]
         within1 = sum(abs(h - m) <= 1 for h, m in zip(human, model)) / len(rows)
         out[dim] = {
@@ -171,15 +190,29 @@ def cmd_score(args) -> int:
     verdict = all(
         out[d]["spearman"] >= 0.6 for d in out if out[d]["spearman"] == out[d]["spearman"]
     )
+    human_gate = rater_type == "human"
     lines = [
-        "# Phase 6 - Judge agreement with hand labels",
+        f"# Phase 6 - Judge agreement with an independent rater",
         "",
-        f"`n = {len(rows)}` reports, hand-labelled before the judge was run. Judge: "
-        f"`{settings.judge_model}`, temperature 0.",
+        f"`n = {len(rows)}` reports. Judge under test: `{settings.judge_model}`, temperature 0. "
+        f"Reference rater: **{rater_name}** ({rater_type}).",
         "",
-        "The labeller did not see the judge's scores. Had they been visible, this would "
-        "measure compliance rather than agreement.",
-        "",
+        "The reference rater scored the reports without seeing the judge's scores. Had they "
+        "been visible, this would measure compliance rather than agreement.",
+        "",]
+    if not human_gate:
+        lines += [
+            "> **This is inter-model agreement, not human validation.** The reference rater is "
+            f"a model (`{rater_name}`), not a person. A strong reference model is a real check "
+            "-- it will catch a judge that is simply wrong -- but two language models can agree "
+            "because they share a blind spot, and no amount of agreement between them detects "
+            "that. The Phase 6 human gate in PLAN.md remains **open**; this does not close it.",
+            "",
+            "What it does establish: the judge is not idiosyncratic relative to a stronger model, "
+            "so the provider matrix is not being ordered by one small model's private tastes.",
+            "",
+        ]
+    lines += [
         "| dimension | Spearman rho | within +/-1 | mean human | mean judge | judge bias |",
         "|---|---|---|---|---|---|",
     ]
@@ -190,9 +223,10 @@ def cmd_score(args) -> int:
         )
     lines += [
         "",
-        f"## Verdict: {'PASS' if verdict else 'FAIL'}",
+        f"## Verdict: {'PASS' if verdict else 'FAIL'}"
+        + ("" if human_gate else " (against a model rater -- human gate still open)"),
         "",
-        "The gate is Spearman rho >= 0.6 on both dimensions. "
+        "The threshold is Spearman rho >= 0.6 on both dimensions. "
         + (
             "Both clear it, so the provider matrix is measuring something real."
             if verdict
@@ -207,15 +241,15 @@ def cmd_score(args) -> int:
         "",
         "## Per-report",
         "",
-        "| id | question | provider | human depth | judge depth | human coh | judge coh |",
+        f"| id | question | provider | {rater_type} depth | judge depth | {rater_type} coh | judge coh |",
         "|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         rep = reports[r["label_id"]]
         lines.append(
             f"| {r['label_id']} | {r['question_id']} | {rep['provider']} | "
-            f"{r['human_depth']} | {r['judge_depth']:.0f} | "
-            f"{r['human_coherence']} | {r['judge_coherence']:.0f} |"
+            f"{r['ref_depth']:.0f} | {r['judge_depth']:.0f} | "
+            f"{r['ref_coherence']:.0f} | {r['judge_coherence']:.0f} |"
         )
     lines.append("")
 
@@ -234,6 +268,9 @@ def main() -> int:
     g.add_argument("--n", type=int, default=20)
     g.set_defaults(func=cmd_generate)
     s = sub.add_parser("score", help="compute agreement from the filled sheet")
+    s.add_argument("--rater", default=None, help="who or what produced the labels")
+    s.add_argument("--rater-type", choices=["human", "model"], default=None,
+                   help="overrides the type inferred from the key naming")
     s.set_defaults(func=cmd_score)
     args = ap.parse_args()
     return args.func(args)

@@ -67,6 +67,12 @@ class Settings(BaseSettings):
     # is the opposite of what it is there for. Measured: a cold 9B load plus a reasoning
     # preamble runs well past 45s on a laptop.
     ollama_timeout_s: float = 300.0
+    # Ollama defaults to a 4096-token context. qwen3.5 is a reasoning model that spent 2419
+    # completion tokens on a two-sentence request, so a synthesis prompt carrying several
+    # documents overran the window and came back with an EMPTY message: reasoning consumed
+    # the whole budget. 4 of 5 local-tier reports in the first label batch were blank
+    # because of this. Raise the window and cap the thinking budget.
+    ollama_num_ctx: int = 32768
 
     # --- tools -------------------------------------------------------------------
     tavily_api_key: str | None = None

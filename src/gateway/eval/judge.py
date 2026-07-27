@@ -12,7 +12,7 @@ badly between runs and make score deltas meaningless.
 
 from __future__ import annotations
 
-import json
+import re
 from dataclasses import dataclass
 
 import litellm
@@ -47,7 +47,7 @@ Briefing:
 {report}
 ---
 
-Reply with JSON only: {{"score": <1-5>, "reason": "<one sentence>"}}"""
+Reply with JSON only: {{"score": <1-5>, "reason": "<one short sentence, max 25 words>"}}"""
 
 NLI_TEMPLATE = """Does the SOURCE support the CLAIM? Answer only whether the source
 entails it -- not whether the claim is true in general.
@@ -62,6 +62,11 @@ Reply with JSON only: {{"supported": true|false}}"""
 
 class JudgeUnavailable(RuntimeError):
     pass
+
+
+#: Last-resort extraction when the JSON is malformed or truncated. The score is emitted
+#: first, so it survives a cut that destroys the rest of the object.
+SCORE_RE = re.compile(r'"?score"?\s*[:=]\s*([1-5])(?:\.0)?\b')
 
 
 @dataclass
@@ -91,24 +96,34 @@ class Judge:
             api_key=self.api_key,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
-            max_tokens=300,
+            # Generous enough that a long `reason` cannot truncate the JSON mid-string.
+            # A truncated response is not a judgement failure, it is a budget bug, and it
+            # used to surface as "judge returned no parseable score".
+            max_tokens=600,
         )
         return response.choices[0].message.content or ""
 
     def _scored(self, prompt: str) -> JudgeScore:
         """Median of ``samples`` draws. Temperature is 0, so >1 sample only guards against
         the occasional malformed response, not against sampling noise."""
-        scores, reason = [], ""
+        scores, reason, last = [], "", ""
         for _ in range(self.samples):
-            parsed = parse_json(self._ask(prompt), default={})
+            last = self._ask(prompt)
+            parsed = parse_json(last, default={})
             if isinstance(parsed, dict) and "score" in parsed:
                 try:
                     scores.append(float(parsed["score"]))
                     reason = reason or str(parsed.get("reason", ""))
-                except (TypeError, ValueError):
                     continue
+                except (TypeError, ValueError):
+                    pass
+            match = SCORE_RE.search(last)
+            if match:
+                scores.append(float(match.group(1)))
         if not scores:
-            raise JudgeUnavailable("judge returned no parseable score")
+            raise JudgeUnavailable(
+                f"judge returned no parseable score; raw response was {last[:200]!r}"
+            )
         scores.sort()
         return JudgeScore(score=scores[len(scores) // 2], reason=reason)
 

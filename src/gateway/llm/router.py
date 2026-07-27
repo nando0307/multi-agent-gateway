@@ -30,6 +30,16 @@ logging.getLogger("LiteLLM").setLevel(logging.CRITICAL)
 logging.getLogger("LiteLLM Router").setLevel(logging.CRITICAL)
 
 
+class EmptyCompletion(RuntimeError):
+    """A provider returned success with no content.
+
+    This is a failure that HTTP status cannot see: 200 OK, no exception, zero words. It
+    was observed for real -- a reasoning model overran its context window and spent the
+    entire budget thinking. Treating it as success let blank reports through to scoring,
+    where they registered as merely poor rather than broken.
+    """
+
+
 class AllProvidersExhausted(RuntimeError):
     """Every provider in the chain failed. Raised cleanly -- never hang."""
 
@@ -184,6 +194,21 @@ class Gateway:
         elapsed = (time.perf_counter() - started) * 1000
         provider = self._resolve_provider(response)
         depth = self._depth(provider)
+
+        text = response.choices[0].message.content or ""
+        if not text.strip():
+            attempts.append(
+                LLMAttempt(len(attempts), provider, False, round(elapsed, 1),
+                           error_class="EmptyCompletion",
+                           error_message="provider returned 200 with no content")
+            )
+            self._record_call(call_id, model, provider, depth, elapsed, attempts,
+                              error="EmptyCompletion")
+            remaining = [p for p in self.chain[self._depth(provider) + 1:]]
+            if not remaining:
+                raise EmptyCompletion(f"{provider} returned an empty completion, chain exhausted")
+            return self.complete(messages, model=remaining[0], **kwargs)
+
         attempts.append(
             LLMAttempt(
                 attempt_idx=len(attempts),
@@ -197,7 +222,7 @@ class Gateway:
             call_id, model, provider, depth, elapsed, attempts, response=response, usage=usage
         )
         return CallResult(
-            text=response.choices[0].message.content or "",
+            text=text,
             served_by=provider,
             fallback_depth=depth,
             attempts=attempts,

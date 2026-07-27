@@ -76,7 +76,7 @@ Ollama needs no key: `ollama serve && ollama pull qwen3.5:9b`.
 ## Reproducing the numbers
 
 ```bash
-uv run pytest                              # 108 tests, fully offline, no keys needed
+uv run pytest                              # 111 tests, fully offline, no keys needed
 uv run python scripts/smoke_providers.py   # what N actually is
 uv run python scripts/bench_latency.py     # → results/latency.md, sets the chain order
 uv run python scripts/chaos_run.py --n 1000 --p 0.1 0.3 0.5   # → results/chaos_report.md
@@ -101,9 +101,12 @@ bash scripts/run_garak.sh                  # model-level probes against the runn
   two.
 - **garak probes the model, not the tool layer.** Its results and the scope-gate results are
   reported separately rather than blended into one flattering figure.
-- **One judge model scores every report.** `results/judge_agreement.md` records how well it
-  tracks hand labels; read it before trusting the provider matrix. Citation sub-scores do
-  not depend on the judge at all.
+- **The judge has been checked against a model, not a human.** Claude Opus 5 scored 18
+  reports independently: depth ρ=0.88, coherence ρ=0.921. That rules out the judge being
+  idiosyncratic, but two models can share a blind spot, so it is not human validation —
+  `results/judge_agreement.md` says so explicitly and the human gate stays open. The judge
+  also runs +1.06 high on coherence, which cancels for provider comparison but inflates the
+  absolute gate threshold. Citation sub-scores do not depend on the judge at all.
 - **N = 4, not 5.** Azure OpenAI was planned and dropped for lack of access. Four providers
   — three independent cloud vendors plus a local tier — is the honest count.
 - **Latency figures are serial.** Ollama is one local process and will queue under the

@@ -3,7 +3,7 @@
 **Repo:** `~/dev/multi-agent-gateway/multi-agent-gateway/`
 **Stack:** LiteLLM (Router/failover) · LlamaIndex (agent workflow) · pytest · garak + bandit
 **Timeline:** 10 working days (1–2 weeks)
-**Status:** Phases 0–5, 8, 9 done · Phases 6-validation, 7, garak remaining
+**Status:** Phases 0–6, 8, 9 done · Phase 7 + garak remaining · human label gate still open
 **Last updated:** 2026-07-27
 **Providers (N=4):** Gemini · NVIDIA NIM · OpenRouter · Ollama (local) — *Azure OpenAI dropped, no access*
 **Search:** Tavily · **Judge:** `openrouter/openai/gpt-oss-120b` (different model from every routed one)
@@ -521,11 +521,16 @@ validation".
   `results/latency.md` before the "after measuring" clause on the resume is true.
   First result in: Gemini p50 9.3s / p95 23.1s / 1 failure in 20 — a poor primary, and it
   currently sits first in the chain. The benchmark demoting it is the point of this phase.
-* **Phase 6 validation — needs you, not me.** `scripts/judge_agreement.py generate --n 20`
-  produces reports and an *empty* label sheet; the judge's scores are deliberately withheld
-  so labelling is not anchored. Fill `datasets/human_labels.jsonl`, then run
-  `judge_agreement.py score`. Gate is Spearman ρ ≥ 0.6 on both dimensions. I cannot
-  fabricate the labels — invented labels would make this check worse than skipping it.
+* **Phase 6 — run against a *model* rater, not a human.** Claude Opus 5 scored the 18
+  reports: depth ρ=0.88, coherence ρ=0.921, both clear of the 0.6 threshold. That shows the
+  judge is not idiosyncratic relative to a stronger model. It is **not** human validation —
+  two models can share a blind spot — so `results/judge_agreement.md` labels itself
+  inter-model agreement and the human gate stays open. To close it, re-score the same sheet
+  by hand using `human_depth`/`human_coherence` keys and re-run.
+* **Judge inflates coherence by +1.06** against the reference rater (depth is near-neutral
+  at +0.28). Provider *comparison* is unaffected — a constant offset cancels — but the
+  absolute 0.70 gate threshold sits against an inflated coherence term and should be
+  recalibrated before it is treated as meaningful.
 * **Phase 7** — `run_eval.py` ready; run after the judge clears the gate.
 * **garak** — installed at `.venv-garak/`, config verified against 0.15.1. Needs the API up.
 
@@ -562,4 +567,7 @@ validation".
 | 2026-07-27 | 1 | Latency benchmark, n=20/provider | chain **openrouter → gemini → ollama → nim** | Both placeholder assumptions overturned. Gemini was first by guess: it is 5x slower than OpenRouter on p95 and the only provider to fail (1/20). The local tier was assumed slowest and pinned last: it is not — p95 23.6s vs NIM's 138.3s, and the tightest p50/p95 spread in the set. Chain order does not affect P(all fail), so there was no availability reason to override the data |
 | 2026-07-27 | 2 | Per-provider timeouts derived from measured p95 | — | The global 45s sat below NIM's 138s p95, so the gateway would have abandoned NIM on its own normal tail and manufactured failovers that were not outages. Each timeout is now ~2x that provider's measured p95 |
 | 2026-07-27 | 3 | Chaos study re-run against the measured chain | **31.2% → 0.1%** @ p=0.3, n=1000 | `chaos_run.py` had its own hardcoded chain; it now imports `DEFAULT_CHAIN`, because a chaos number describing a chain the system does not ship is worse than no number |
+| 2026-07-27 | 6 | Judge agreement vs Claude Opus 5 as reference rater | depth **ρ=0.88**, coherence **ρ=0.921** | PASS on the threshold, but the rater is a model, so this is inter-model agreement and the human gate stays open. Judge inflates coherence by +1.06 |
+| 2026-07-27 | — | **Bug: 4 of 5 local-tier reports were empty.** Root cause: Ollama defaults to a 4096-token context and qwen3.5 is a reasoning model — it spent 2419 completion tokens on a two-sentence request, so a synthesis prompt with documents overran the window and returned a blank message | — | Fixed with `num_ctx=32768`; verified a previously-blank question now yields a 1057-char cited report. Also added an `EmptyCompletion` guard: a 200 with no content is now a provider failure that falls through the chain, not a success scored as a merely-poor report |
+| 2026-07-27 | 6 | Judge truncation fix | — | `max_tokens=300` cut long `reason` strings mid-JSON, surfacing as "no parseable score". Raised to 600 and added a regex fallback that recovers the score from a truncated object |
 | 2026-07-27 | 8 | garak 0.15.1 installed, REST config verified | — | `request_timeout` defaulted to 20s (too short for a research call); `promptinject.HijackHateHumansMini` does not exist. Probe set bounded — each probe is a full research run |
