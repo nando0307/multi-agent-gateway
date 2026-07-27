@@ -17,7 +17,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class JudgeIndependenceError(RuntimeError):
-    """Raised when the eval judge shares a provider with the router (PLAN.md D5)."""
+    """Raised when the eval judge is one of the models it would be scoring (PLAN.md D5)."""
+
+
+def model_identity(model_string: str) -> str:
+    """Reduce a litellm model string to the underlying model name.
+
+    The same model reached by two different routes is still the same model:
+    ``gemini/gemini-3.1-flash-lite`` and ``openrouter/google/gemini-3.1-flash-lite`` must
+    compare equal, or the independence guard is trivially bypassed by changing route.
+    """
+    tail = model_string.strip().lower().rstrip("/").split("/")[-1]
+    for variant in (":free", ":nitro", ":beta", ":extended", ":floor"):
+        if tail.endswith(variant):
+            tail = tail[: -len(variant)]
+    return tail
 
 
 class Settings(BaseSettings):
@@ -27,10 +41,16 @@ class Settings(BaseSettings):
 
     # --- routed providers (N=4; Azure dropped, see PLAN.md D6) -------------------
     gemini_api_key: str | None = None
-    gemini_model: str = "gemini/gemini-2.5-flash"
+    # Pinned, not an alias. `gemini-flash-latest` also works but moves under you, which
+    # would silently invalidate a benchmark taken days earlier. Verified working on this
+    # key; `gemini-2.5-flash` is closed to new keys and `gemini-3.5-flash` returned 503.
+    gemini_model: str = "gemini/gemini-3.1-flash-lite"
 
     nvidia_nim_api_key: str | None = None
-    nim_model: str = "nvidia_nim/meta/llama-3.3-70b-instruct"
+    # llama-3.3-70b answers in ~87s on this key -- usable but far too slow for a routine
+    # tier. Nemotron-super-49b returns in ~0.4s and is the stronger model of the two that
+    # are actually fast.
+    nim_model: str = "nvidia_nim/nvidia/llama-3.3-nemotron-super-49b-v1"
 
     openrouter_api_key: str | None = None
     # Pick an upstream vendor distinct from Gemini/NIM so the tiers fail
@@ -65,19 +85,69 @@ class Settings(BaseSettings):
 
         return tuple(n for n in DEFAULT_CHAIN if provider_params(n, self) is not None)
 
-    def assert_judge_is_independent(self) -> None:
-        """Guard for PLAN.md D5 -- makes the bias structurally impossible, not just discouraged."""
-        from gateway.llm.model_list import PROVIDER_PREFIXES
+    def resolve_judge_key(self) -> str | None:
+        """The judge's key: explicit if given, else inferred from its route.
 
+        Lets JUDGE_MODEL=openrouter/... reuse OPENROUTER_API_KEY rather than duplicating
+        the same secret under a second name in .env.
+        """
+        if self.judge_api_key:
+            return self.judge_api_key
+        model = self.judge_model.lower()
+        if model.startswith("openrouter/"):
+            return self.openrouter_api_key
+        if model.startswith(("gemini/", "gemini-")):
+            return self.gemini_api_key
+        if model.startswith("nvidia_nim/"):
+            return self.nvidia_nim_api_key
+        return None
+
+    def routed_model_identities(self) -> dict[str, str]:
+        from gateway.llm.model_list import DEFAULT_CHAIN, provider_params
+
+        out = {}
+        for name in DEFAULT_CHAIN:
+            params = provider_params(name, self)
+            if params is not None:
+                out[name] = model_identity(params["model"])
+        return out
+
+    def assert_judge_is_independent(self) -> None:
+        """Guard for PLAN.md D5.
+
+        The check is at *model* level, not provider level. Self-preference bias is a model
+        rating its own output higher; a different model reached through a shared account
+        does not have that problem. Sharing an account is a weaker claim than a wholly
+        separate vendor, so it is recorded in `judge_independence_caveat()` and printed
+        into the matrix report rather than passed over in silence.
+        """
+        judge = model_identity(self.judge_model)
+        for name, identity in self.routed_model_identities().items():
+            if judge == identity:
+                raise JudgeIndependenceError(
+                    f"JUDGE_MODEL={self.judge_model!r} is the same model served by routed "
+                    f"provider {name!r}. A model scoring its own output measures "
+                    "self-preference, not quality (PLAN.md D5). Pick a different model."
+                )
+
+    def judge_independence_caveat(self) -> str | None:
+        """Non-fatal note when the judge shares an account with a routed provider."""
         judge = self.judge_model.lower()
-        for name in self.available_providers():
-            for prefix in PROVIDER_PREFIXES[name]:
-                if judge.startswith(prefix):
-                    raise JudgeIndependenceError(
-                        f"JUDGE_MODEL={self.judge_model!r} belongs to routed provider {name!r}. "
-                        "The judge must be independent of every provider it scores "
-                        "(PLAN.md D5); use a separate Anthropic/OpenAI key."
-                    )
+        shared = None
+        if judge.startswith("openrouter/") and self.openrouter_api_key:
+            shared = "openrouter"
+        elif judge.startswith(("gemini/", "gemini-")) and self.gemini_api_key:
+            shared = "gemini"
+        elif judge.startswith("nvidia_nim/") and self.nvidia_nim_api_key:
+            shared = "nim"
+        if shared is None:
+            return None
+        return (
+            f"The judge (`{self.judge_model}`) is a different model from every routed one, so "
+            f"there is no self-preference bias, but it is reached through the same `{shared}` "
+            "account that also serves requests. A wholly separate vendor would be a stronger "
+            "guarantee."
+        )
 
 
 @lru_cache(maxsize=1)

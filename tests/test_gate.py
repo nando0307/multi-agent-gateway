@@ -128,3 +128,53 @@ def test_deterministic_mode_excludes_coherence_rather_than_guessing_it():
     assert result.coherence == 0.0
     assert "coherence excluded" in result.notes[0]
     assert result.composite > 0.0
+
+
+# --- judge independence (PLAN.md D5) ---------------------------------------------
+def test_judge_may_not_be_a_model_under_test():
+    """The bias that matters is a model scoring its own output."""
+    import pytest
+
+    from gateway.settings import JudgeIndependenceError, Settings
+
+    settings = Settings(
+        _env_file=None, gemini_api_key="k", judge_model="gemini/gemini-3.1-flash-lite",
+        gemini_model="gemini/gemini-3.1-flash-lite",
+    )
+    with pytest.raises(JudgeIndependenceError):
+        settings.assert_judge_is_independent()
+
+
+def test_same_model_via_a_different_route_is_still_the_same_model():
+    """Changing route must not be a way around the guard."""
+    import pytest
+
+    from gateway.settings import JudgeIndependenceError, Settings
+
+    settings = Settings(
+        _env_file=None, gemini_api_key="k", gemini_model="gemini/gemini-3.1-flash-lite",
+        judge_model="openrouter/google/gemini-3.1-flash-lite",
+    )
+    with pytest.raises(JudgeIndependenceError):
+        settings.assert_judge_is_independent()
+
+
+def test_different_model_on_a_shared_account_is_allowed_but_flagged():
+    from gateway.settings import Settings
+
+    settings = Settings(
+        _env_file=None, openrouter_api_key="k",
+        openrouter_model="openrouter/mistralai/mistral-small-3.2-24b-instruct",
+        judge_model="openrouter/openai/gpt-oss-120b",
+    )
+    settings.assert_judge_is_independent()          # no self-preference: different model
+    caveat = settings.judge_independence_caveat()   # but the shared account is recorded
+    assert caveat and "same `openrouter` account" in caveat
+
+
+def test_openrouter_judge_reuses_the_openrouter_key():
+    from gateway.settings import Settings
+
+    settings = Settings(_env_file=None, openrouter_api_key="or-key",
+                        judge_model="openrouter/openai/gpt-oss-120b")
+    assert settings.resolve_judge_key() == "or-key"

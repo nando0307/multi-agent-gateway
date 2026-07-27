@@ -91,12 +91,21 @@ marker against the *actual tool-call trace* of that run. A URL the agent never f
 a hallucination you can prove with a string comparison, no judge needed. Only the final
 claim-support step uses a model.
 
-**D5. The judge model must not be a provider under test.**
-If Gemini judges Gemini's output you get self-preference bias and the provider matrix is worthless.
-**Resolved:** the judge runs on a separate Anthropic/OpenAI key that is *not* in the router's model
-list — it never serves a research request, only scores one. Pin one model id, temperature 0, hold it
-fixed for the entire project, and record the exact id in every result file. Budget ~200 judged runs;
-at Sonnet-class pricing on short reports that is a few dollars total.
+**D5. The judge must not be a model under test.**
+If Gemini judges Gemini's output you get self-preference bias and the matrix is worthless.
+
+**Revised 2026-07-27** — the guard is now *model*-level, not *provider*-level. The bias that
+matters is a model rating its own output; a different model reached through a shared account
+does not have it. Anthropic was the original plan but the account has no credits, so the judge
+is `openrouter/openai/gpt-oss-120b`: vendor-distinct from all four routed models
+(gemini-3.1-flash-lite, nemotron-super-49b, mistral-small, qwen3.5), ~$0.03 for a full
+120-run matrix, and it reuses `OPENROUTER_API_KEY` rather than duplicating a secret.
+
+Sharing an account with a routed provider *is* a weaker claim than a wholly separate vendor.
+`settings.judge_independence_caveat()` says so, and `run_eval.py` prints it into
+`results/provider_matrix.md` rather than passing over it. `assert_judge_is_independent()` still
+hard-fails on the same model, including the same model reached by a different route
+(`openrouter/google/gemini-...` vs `gemini/gemini-...`), so switching route is not a bypass.
 
 **D6. N=4, and say 4.** Azure OpenAI is out (no access). The fallback chain is Gemini → NVIDIA NIM →
 OpenRouter → Ollama, and it is *better shaped* than a 5th cloud provider would make it: three

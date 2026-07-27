@@ -74,18 +74,21 @@ class Judge:
     def __init__(self, settings: Settings | None = None, *, samples: int = 1):
         self.settings = settings or get_settings()
         self.settings.assert_judge_is_independent()
-        if not self.settings.judge_api_key:
+        self.api_key = self.settings.resolve_judge_key()
+        if not self.api_key:
             raise JudgeUnavailable(
-                "JUDGE_API_KEY is not set. The eval harness will not silently fall back to a "
-                "routed provider -- that would invalidate the provider matrix (PLAN.md D5)."
+                "No key resolves for JUDGE_MODEL. Set JUDGE_API_KEY, or use a JUDGE_MODEL whose "
+                "route already has a key. The eval harness will not silently fall back to a "
+                "model under test -- that would invalidate the provider matrix (PLAN.md D5)."
             )
+        self.caveat = self.settings.judge_independence_caveat()
         self.model = self.settings.judge_model
         self.samples = samples
 
     def _ask(self, prompt: str) -> str:
         response = litellm.completion(
             model=self.model,
-            api_key=self.settings.judge_api_key,
+            api_key=self.api_key,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
             max_tokens=300,

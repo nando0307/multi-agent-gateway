@@ -158,9 +158,13 @@ def main() -> int:
         f"{len(questions)} questions x {len(providers)} providers, each run **pinned** to one "
         "provider with failover disabled, so every row measures that provider alone. "
         f"Gate threshold **{threshold}**. "
-        + (f"Judge: `{settings.judge_model}`, temperature 0, independent of every routed provider."
-           if judge else "Deterministic scoring only -- coherence is excluded rather than guessed."),
-        "",
+        + (f"Judge: `{settings.judge_model}`, temperature 0, a different model from every "
+           "routed one." if judge
+           else "Deterministic scoring only -- coherence is excluded rather than guessed."),
+        "",]
+    if judge is not None and judge.caveat:
+        lines += ["> **Independence caveat.** " + judge.caveat, ""]
+    lines += [
         "All providers saw **identical evidence**: the search cache is shared across the matrix, "
         "so this compares models, not search luck.",
         "",

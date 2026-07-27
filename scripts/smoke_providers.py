@@ -33,9 +33,12 @@ def main() -> int:
         if params is None:
             print(f"{name:<12} {'skip':<8} {'-':>9}  no credentials configured")
             continue
+        # provider_params may already carry a per-provider timeout (the local tier does);
+        # passing another one here would collide.
+        params.setdefault("timeout", 30)
         started = time.perf_counter()
         try:
-            response = litellm.completion(messages=PROMPT, max_tokens=16, timeout=30, **params)
+            response = litellm.completion(messages=PROMPT, max_tokens=64, **params)
             elapsed = (time.perf_counter() - started) * 1000
             text = (response.choices[0].message.content or "").strip()[:40]
             print(f"{name:<12} {'ok':<8} {elapsed:>8.0f}ms  {text!r}")
