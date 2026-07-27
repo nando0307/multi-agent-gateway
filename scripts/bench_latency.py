@@ -46,11 +46,14 @@ def percentile(values: list[float], q: float) -> float:
 
 
 def bench(name: str, params: dict, runs: int) -> dict:
+    # A per-provider timeout in params wins; passing another one here would collide and
+    # fail every run for the provider that has one (the local tier).
+    params = {"timeout": 60, **params}
     latencies, failures, tokens, costs = [], 0, [], []
     for _ in range(runs):
         started = time.perf_counter()
         try:
-            response = litellm.completion(messages=PROMPT, max_tokens=400, timeout=60, **params)
+            response = litellm.completion(messages=PROMPT, max_tokens=400, **params)
             latencies.append((time.perf_counter() - started) * 1000)
             usage = getattr(response, "usage", None)
             if usage:
@@ -77,11 +80,15 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=20)
     ap.add_argument("--label", default="run1", help="e.g. morning / evening")
+    ap.add_argument("--only", nargs="*", default=None,
+                    help="benchmark just these providers and merge into the label")
     args = ap.parse_args()
 
     settings = get_settings()
     rows = []
     for name in DEFAULT_CHAIN:
+        if args.only and name not in args.only:
+            continue
         params = provider_params(name, settings)
         if params is None:
             print(f"{name}: skipped (no credentials)")
@@ -96,7 +103,11 @@ def main() -> int:
 
     path = results / "latency.json"
     history = json.loads(path.read_text()) if path.exists() else {}
-    history[args.label] = rows
+    # Merge per provider rather than replacing the label wholesale, so a single provider
+    # can be re-run (or backfilled) without discarding the rest of the sitting.
+    existing = {r["provider"]: r for r in history.get(args.label, [])}
+    existing.update({r["provider"]: r for r in rows})
+    history[args.label] = list(existing.values())
     path.write_text(json.dumps(history, indent=2))
 
     # Order by mean p95 across all recorded labels.

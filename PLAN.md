@@ -3,10 +3,10 @@
 **Repo:** `~/dev/multi-agent-gateway/multi-agent-gateway/`
 **Stack:** LiteLLM (Router/failover) · LlamaIndex (agent workflow) · pytest · garak + bandit
 **Timeline:** 10 working days (1–2 weeks)
-**Status:** Phases 0, 2–8 built and green · Phases 1, 6-judge, 7, 9 blocked on API keys
-**Last updated:** 2026-07-26
+**Status:** Phases 0, 2–5, 8, 9 done · Phase 1 running · Phases 6-validation, 7, garak queued
+**Last updated:** 2026-07-27
 **Providers (N=4):** Gemini · NVIDIA NIM · OpenRouter · Ollama (local) — *Azure OpenAI dropped, no access*
-**Search:** Tavily · **Judge:** independent Anthropic/OpenAI key (not a routed provider)
+**Search:** Tavily · **Judge:** `openrouter/openai/gpt-oss-120b` (different model from every routed one)
 
 ---
 
@@ -514,15 +514,20 @@ validation".
   an assertion in `settings.py`. Removes self-preference bias from the provider matrix entirely,
   which is the difference between a defensible eval harness and a decorative one.
 
-### Blocked on credentials (code written, numbers not yet produced)
+### Remaining work
 
-* **Phase 1** — `bench_latency.py` is written but needs live providers. `DEFAULT_CHAIN` is
-  still the *placeholder* order; it must be re-derived from `results/latency.md` before the
-  "after measuring" clause is true.
-* **Phase 6 judge validation** — `results/judge_agreement.md` does not exist yet. Hand-label
-  20 reports and check Spearman ρ **before** running the matrix; it is a hard gate.
-* **Phase 7** — `run_eval.py` is written; the silent-regression count needs keys + judge.
-* **garak** — needs the API running and garak installed in a separate venv.
+* **Phase 1 — running.** `bench_latency.py --runs 20 --label morning` is in flight.
+  `DEFAULT_CHAIN` is still the *placeholder* order and must be re-derived from
+  `results/latency.md` before the "after measuring" clause on the resume is true.
+  First result in: Gemini p50 9.3s / p95 23.1s / 1 failure in 20 — a poor primary, and it
+  currently sits first in the chain. The benchmark demoting it is the point of this phase.
+* **Phase 6 validation — needs you, not me.** `scripts/judge_agreement.py generate --n 20`
+  produces reports and an *empty* label sheet; the judge's scores are deliberately withheld
+  so labelling is not anchored. Fill `datasets/human_labels.jsonl`, then run
+  `judge_agreement.py score`. Gate is Spearman ρ ≥ 0.6 on both dimensions. I cannot
+  fabricate the labels — invented labels would make this check worse than skipping it.
+* **Phase 7** — `run_eval.py` ready; run after the judge clears the gate.
+* **garak** — installed at `.venv-garak/`, config verified against 0.15.1. Needs the API up.
 
 ### Still open (non-blocking, decide by the phase noted)
 
@@ -550,3 +555,8 @@ validation".
 | 2026-07-26 | 6 | Deterministic citation checks, rubric, judge client | — | Judge client written but **unrun**: needs `JUDGE_API_KEY`. Refuses to fall back to a routed provider |
 | 2026-07-26 | 8 | 41-attack + 40-benign corpora, injection eval, bandit/pip-audit/secret scan | **100% blocked, 0% FP**; bandit 0 issues; 0 sentinel leaks | Block rate is in-sample — patterns were tuned against this corpus, disclosed in the report. Both bandit findings fixed rather than suppressed |
 | 2026-07-26 | 9 | FastAPI, CLI, README | — | 104 tests, all offline |
+| 2026-07-27 | 0 | Smoke test against real keys | **N = 4** | Three stale defaults found: `gemini-2.5-flash` is 404 "no longer available to new users"; NIM `llama-3.3-70b` takes ~87s (timed out at 362s once); Anthropic judge account has no credits. Now `gemini-3.1-flash-lite`, `nemotron-super-49b`, judge on OpenRouter |
+| 2026-07-27 | — | Judge guard reworked from provider-level to model-level | — | Provider-level blocked any judge sharing an account. Self-preference is a *model* scoring itself, so the check compares underlying model names — `openrouter/google/gemini-…` is still caught as `gemini/gemini-…`. Shared-account caveat is printed into the matrix report, not buried |
+| 2026-07-27 | 6 | `judge_agreement.py` — two-phase harness | — | Sheet is generated *without* judge scores; seeing them first would measure compliance, not agreement. Spearman verified against perfect/inverse/tied cases |
+| 2026-07-27 | 4 | On-disk page cache | — | Matrix would otherwise re-download every page once per provider. Scope check still runs on every call; the cache short-circuits the network, never the policy |
+| 2026-07-27 | 8 | garak 0.15.1 installed, REST config verified | — | `request_timeout` defaulted to 20s (too short for a research call); `promptinject.HijackHateHumansMini` does not exist. Probe set bounded — each probe is a full research run |
