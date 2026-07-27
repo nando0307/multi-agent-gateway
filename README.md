@@ -28,11 +28,13 @@ LlamaIndex Workflow ── Planner ──► Researcher ──► Synthesizer
       ▼                              │
  litellm.Router                      ▼
   fallback chain              web_search / fetch_url
+  per-provider timeouts
   retries + cooldown
       │
-  ┌──────┴─────┬────────┬──────────┐
-  ▼            ▼        ▼          ▼
-Gemini  NVIDIA NIM  OpenRouter  Ollama (local)
+  ┌──────────┴──┬─────────────┬──────────┐
+  ▼             ▼             ▼          ▼
+OpenRouter   Gemini   Ollama (local)   NVIDIA NIM
+ p95 4.6s    23.1s        23.6s          138.3s
       │
       ▼
  QualityGate — score, retry once on another provider, never return a failure silently
@@ -74,7 +76,7 @@ Ollama needs no key: `ollama serve && ollama pull qwen3.5:9b`.
 ## Reproducing the numbers
 
 ```bash
-uv run pytest                              # 104 tests, fully offline, no keys needed
+uv run pytest                              # 108 tests, fully offline, no keys needed
 uv run python scripts/smoke_providers.py   # what N actually is
 uv run python scripts/bench_latency.py     # → results/latency.md, sets the chain order
 uv run python scripts/chaos_run.py --n 1000 --p 0.1 0.3 0.5   # → results/chaos_report.md
