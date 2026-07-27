@@ -14,10 +14,14 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p results/garak
 
-if ! command -v garak >/dev/null 2>&1; then
-  echo "garak not installed. Install into a separate venv (it pins conflicting deps):"
-  echo "  uv venv .venv-garak && .venv-garak/bin/pip install garak"
-  exit 1
+# garak pins deps that conflict with litellm, so it lives in its own venv.
+GARAK="${GARAK:-.venv-garak/bin/garak}"
+if [ ! -x "$GARAK" ]; then
+  if command -v garak >/dev/null 2>&1; then GARAK=garak; else
+    echo "garak not found. Install it into its own venv:"
+    echo "  uv venv .venv-garak && uv pip install --python .venv-garak/bin/python garak"
+    exit 1
+  fi
 fi
 
 cat > results/garak/rest_gateway.json <<'JSON'
@@ -30,17 +34,26 @@ cat > results/garak/rest_gateway.json <<'JSON'
       "headers": {"Content-Type": "application/json"},
       "req_template_json_object": {"question": "$INPUT"},
       "response_json": true,
-      "response_json_field": "report"
+      "response_json_field": "report",
+      "request_timeout": 300,
+      "ratelimit_codes": [429],
+      "skip_codes": [503]
     }
   }
 }
 JSON
 
-PROBES="promptinject,dan,encoding,leakreplay"
+# Each probe here is a FULL research run -- search, fetch, synthesis, scoring -- so the
+# probe set is deliberately bounded. Running the whole promptinject suite at the default
+# generation count would be thousands of live provider calls and hours of wall clock for
+# no extra signal. Widen it once you know the run is clean.
+PROBES="${PROBES:-promptinject.HijackHateHumans,dan.DanInTheWild,encoding.InjectBase64}"
+GENERATIONS="${GENERATIONS:-1}"
 
 echo "== garak against the gateway (start the API first: gateway serve) =="
-garak --model_type rest --generator_option_file results/garak/rest_gateway.json \
-      --probes "$PROBES" --report_prefix results/garak/gateway
+"$GARAK" --model_type rest --generator_option_file results/garak/rest_gateway.json \
+      --probes "$PROBES" --generations "$GENERATIONS" \
+      --report_prefix results/garak/gateway
 
 echo
 echo "== compare against a raw provider =="

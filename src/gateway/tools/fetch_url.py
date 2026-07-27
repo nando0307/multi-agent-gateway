@@ -8,11 +8,16 @@ one.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
 
 import httpx
 
 from gateway.security.scope import check_url
+
+CACHE_DIR = Path(__file__).resolve().parents[3] / ".cache" / "pages"
 
 MAX_BYTES = 1_000_000
 MAX_REDIRECTS = 3
@@ -44,7 +49,40 @@ def _extract(html: str, url: str) -> tuple[str, str]:
     return title, text
 
 
-def fetch(url: str, *, timeout: float = 10.0, resolve_dns: bool = True) -> FetchedPage:
+def _cache_path(url: str) -> Path:
+    return CACHE_DIR / f"{hashlib.sha256(url.encode()).hexdigest()[:24]}.json"
+
+
+def fetch(
+    url: str, *, timeout: float = 10.0, resolve_dns: bool = True, use_cache: bool = True
+) -> FetchedPage:
+    """Fetch and extract a page.
+
+    Cached on disk for the same reason searches are: the provider matrix runs every
+    question through every provider, and re-downloading each page once per provider would
+    be slow, rude to the sites, and would let page drift between passes turn into apparent
+    quality differences between models. The scope check still runs on every call -- the
+    cache short-circuits the network, never the policy.
+    """
+    decision = check_url(url, resolve_dns=resolve_dns)
+    if not decision.allowed:
+        raise FetchError(f"blocked by scope policy ({decision.rule}): {decision.reason}")
+
+    path = _cache_path(url)
+    if use_cache and path.exists():
+        try:
+            return FetchedPage(**json.loads(path.read_text()))
+        except (json.JSONDecodeError, TypeError):
+            pass  # corrupt entry: fall through and refetch
+
+    page = _fetch_live(url, timeout=timeout, resolve_dns=resolve_dns)
+    if use_cache:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(asdict(page)))
+    return page
+
+
+def _fetch_live(url: str, *, timeout: float, resolve_dns: bool) -> FetchedPage:
     current = url
     with httpx.Client(follow_redirects=False, timeout=timeout) as client:
         for _ in range(MAX_REDIRECTS + 1):
