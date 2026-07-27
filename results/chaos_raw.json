@@ -14,12 +14,11 @@
       0.0,
       0.38
     ],
-    "gateway_mean_fallback_depth": 0.1,
+    "gateway_mean_fallback_depth": 0.099,
     "gateway_provider_share": {
-      "gemini": 914,
-      "nim": 73,
-      "ollama": 1,
-      "openrouter": 12
+      "openrouter": 914,
+      "gemini": 73,
+      "ollama": 13
     }
   },
   {
@@ -32,17 +31,16 @@
       28.4,
       34.14
     ],
-    "gateway_failure_pct": 0.0,
+    "gateway_failure_pct": 0.1,
     "gateway_ci": [
-      0.0,
-      0.38
+      0.02,
+      0.56
     ],
-    "gateway_mean_fallback_depth": 0.412,
+    "gateway_mean_fallback_depth": 0.387,
     "gateway_provider_share": {
-      "gemini": 688,
-      "nim": 235,
-      "openrouter": 54,
-      "ollama": 23
+      "openrouter": 688,
+      "gemini": 235,
+      "ollama": 76
     }
   },
   {
@@ -60,12 +58,12 @@
       0.02,
       0.56
     ],
-    "gateway_mean_fallback_depth": 0.886,
+    "gateway_mean_fallback_depth": 0.783,
     "gateway_provider_share": {
-      "gemini": 476,
-      "nim": 267,
-      "ollama": 106,
-      "openrouter": 150
+      "openrouter": 476,
+      "gemini": 267,
+      "ollama": 253,
+      "nim": 3
     }
   }
 ]

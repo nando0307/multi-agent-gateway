@@ -82,12 +82,14 @@ def main() -> int:
     ap.add_argument("--label", default="run1", help="e.g. morning / evening")
     ap.add_argument("--only", nargs="*", default=None,
                     help="benchmark just these providers and merge into the label")
+    ap.add_argument("--report-only", action="store_true",
+                    help="regenerate the report from latency.json without re-benchmarking")
     args = ap.parse_args()
 
     settings = get_settings()
     rows = []
     for name in DEFAULT_CHAIN:
-        if args.only and name not in args.only:
+        if args.report_only or (args.only and name not in args.only):
             continue
         params = provider_params(name, settings)
         if params is None:
@@ -147,9 +149,30 @@ def main() -> int:
         "Tie-breakers, applied in order: measured failure count during the benchmark, then cost "
         "per request, then rate-limit headroom on the free tier.",
         "",
-        "The local tier is pinned last regardless of measured latency. It is slower than every "
-        "cloud provider, but it cannot rate-limit, so it is the only sensible terminator for "
-        "the chain.",
+        "## Two assumptions the measurement overturned",
+        "",
+        "**Gemini is not the primary.** It was placed first before any data existed. It is 5x "
+        "slower than OpenRouter on p95 and was the only provider to fail during the benchmark "
+        "(1/20). The placeholder was wrong.",
+        "",
+        "**The local tier is not slowest, and is not pinned last.** The plan assumed Ollama "
+        "would terminate the chain because it would be the slowest thing in it. It is not: at "
+        "p95 23.6s it beats NIM's 138.3s by roughly 6x, because NIM's model spends a long and "
+        "variable time reasoning before it answers. Ollama is also the most *predictable* tier "
+        "in the set -- its p50 and p95 differ by under 400ms, against a 114s spread for NIM.",
+        "",
+        "Ordering it last anyway would have been cargo-culting the plan over the data. Note "
+        "that chain order does not affect the residual failure rate at all -- that is "
+        "P(all tiers fail), which is order-independent -- so there is no availability argument "
+        "for a particular position. Order only decides who serves and how fast, and on the "
+        "stated ordering key Ollama earns third.",
+        "",
+        "### Caveat on the local tier",
+        "",
+        "These are **serial** measurements. Ollama is one process on one machine, so under the "
+        "researcher's concurrent sub-question fan-out it will queue and degrade in a way the "
+        "hosted providers will not. Its position here is honest for the sequential case and "
+        "optimistic under load; a concurrent benchmark would be the way to settle it.",
         "",
         f"Update `DEFAULT_CHAIN` in `src/gateway/llm/model_list.py` to match: `{tuple(order)}`",
         "",

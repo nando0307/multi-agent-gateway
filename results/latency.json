@@ -1,0 +1,44 @@
+{
+  "morning": [
+    {
+      "provider": "gemini",
+      "runs": 20,
+      "failures": 1,
+      "p50_ms": 9287.3,
+      "p95_ms": 23095.8,
+      "max_ms": 24897.5,
+      "mean_completion_tokens": 287.1,
+      "mean_cost_usd": 0.000438
+    },
+    {
+      "provider": "nim",
+      "runs": 20,
+      "failures": 0,
+      "p50_ms": 24116.1,
+      "p95_ms": 138277.7,
+      "max_ms": 141763.5,
+      "mean_completion_tokens": 347.9,
+      "mean_cost_usd": null
+    },
+    {
+      "provider": "openrouter",
+      "runs": 20,
+      "failures": 0,
+      "p50_ms": 3320.6,
+      "p95_ms": 4588.9,
+      "max_ms": 35764.6,
+      "mean_completion_tokens": 352.1,
+      "mean_cost_usd": 0.000109
+    },
+    {
+      "provider": "ollama",
+      "runs": 20,
+      "failures": 0,
+      "p50_ms": 23209.3,
+      "p95_ms": 23584.3,
+      "max_ms": 31894.2,
+      "mean_completion_tokens": 400,
+      "mean_cost_usd": 0.0
+    }
+  ]
+}

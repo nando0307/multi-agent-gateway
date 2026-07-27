@@ -39,11 +39,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT))
 
-from gateway.llm.model_list import PRIMARY_ALIAS  # noqa: E402
+from gateway.llm.model_list import DEFAULT_CHAIN, PRIMARY_ALIAS  # noqa: E402
 from gateway.llm.router import AllProvidersExhausted, Gateway  # noqa: E402
 from tests.conftest import FAIL_429, FAIL_500, make_settings  # noqa: E402
 
-CHAIN = ("gemini", "nim", "openrouter", "ollama")
+# Imported, never hardcoded: a chaos number that describes a chain the system does not
+# actually ship is worse than no number. Phase 1 reordered this and the study must follow.
+CHAIN = DEFAULT_CHAIN
+LOCAL_TIER = "ollama"
 QUESTION = [{"role": "user", "content": "Summarise recent progress in grid-scale storage."}]
 
 # Retry backoff is real time spent sleeping. Against a mocked transport it adds hours of
@@ -83,7 +86,7 @@ def build_schedules(n, p, model, rng, local_fail: float) -> dict[str, list[bool]
     """
     sched = {}
     for name in CHAIN:
-        if name == "ollama":
+        if name == LOCAL_TIER:
             sched[name] = independent_schedule(n, local_fail, rng)
         elif model == "sticky":
             sched[name] = sticky_schedule(n, p, mean_len=8.0, rng=rng)

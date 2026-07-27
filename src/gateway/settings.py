@@ -41,18 +41,21 @@ class Settings(BaseSettings):
 
     # --- routed providers (N=4; Azure dropped, see PLAN.md D6) -------------------
     gemini_api_key: str | None = None
+    gemini_timeout_s: float = 60.0
     # Pinned, not an alias. `gemini-flash-latest` also works but moves under you, which
     # would silently invalidate a benchmark taken days earlier. Verified working on this
     # key; `gemini-2.5-flash` is closed to new keys and `gemini-3.5-flash` returned 503.
     gemini_model: str = "gemini/gemini-3.1-flash-lite"
 
     nvidia_nim_api_key: str | None = None
+    nim_timeout_s: float = 240.0
     # llama-3.3-70b answers in ~87s on this key -- usable but far too slow for a routine
     # tier. Nemotron-super-49b returns in ~0.4s and is the stronger model of the two that
     # are actually fast.
     nim_model: str = "nvidia_nim/nvidia/llama-3.3-nemotron-super-49b-v1"
 
     openrouter_api_key: str | None = None
+    openrouter_timeout_s: float = 30.0
     # Pick an upstream vendor distinct from Gemini/NIM so the tiers fail
     # independently (PLAN.md Phase 1). Verify the slug against openrouter.ai/models.
     openrouter_model: str = "openrouter/mistralai/mistral-small-3.2-24b-instruct"
@@ -73,6 +76,11 @@ class Settings(BaseSettings):
     judge_model: str = "claude-sonnet-5"
 
     # --- behaviour ---------------------------------------------------------------
+    # Global default, used only by providers without their own. Every timeout below is
+    # ~2x that provider's MEASURED p95 (results/latency.md), floored at 30s. A single
+    # global value cannot serve a 4.6s-p95 provider and a 138s-p95 one: set it low and NIM
+    # fails on its own normal tail, manufacturing failovers that are not real outages; set
+    # it high and a hung primary stalls every request before failover can help.
     request_timeout_s: float = 45.0
     num_retries: int = 2
     allowed_fails: int = 3

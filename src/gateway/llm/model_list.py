@@ -21,8 +21,18 @@ if TYPE_CHECKING:
 #: The alias every agent asks for. Agents never name a provider.
 PRIMARY_ALIAS = "research-primary"
 
-#: Fallback order. Placeholder until Phase 1 runs -- see results/latency.md.
-DEFAULT_CHAIN: tuple[str, ...] = ("gemini", "nim", "openrouter", "ollama")
+#: Fallback order, set from measurement -- see results/latency.md (2026-07-27, n=20 each).
+#: Ordered by p95, not p50: failover is a tail-latency mechanism, so the tail is the
+#: ordering key. OpenRouter (p95 4.6s) is the clear primary; Gemini (23.1s, and the only
+#: provider to fail during the benchmark) sits second.
+#:
+#: Ollama is third, not last. The plan assumed the local tier would terminate the chain by
+#: being slowest -- it is not. At p95 23.6s it beats NIM's 138.3s by ~6x, and its p50/p95
+#: differ by under 400ms against NIM's 114s spread. Chain order does not affect the
+#: residual failure rate (that is P(all fail), which is order-independent), so there was no
+#: availability reason to override the measurement. Caveat: these are serial numbers, and
+#: Ollama is a single local process that will queue under concurrent fan-out.
+DEFAULT_CHAIN: tuple[str, ...] = ("openrouter", "gemini", "ollama", "nim")
 
 #: litellm model-string prefixes per provider, used by the judge-independence guard.
 PROVIDER_PREFIXES: dict[str, tuple[str, ...]] = {
@@ -42,15 +52,27 @@ def provider_params(name: str, settings: Settings) -> dict[str, Any] | None:
     if name == "gemini":
         if not settings.gemini_api_key:
             return None
-        return {"model": settings.gemini_model, "api_key": settings.gemini_api_key}
+        return {
+            "model": settings.gemini_model,
+            "api_key": settings.gemini_api_key,
+            "timeout": settings.gemini_timeout_s,
+        }
     if name == "nim":
         if not settings.nvidia_nim_api_key:
             return None
-        return {"model": settings.nim_model, "api_key": settings.nvidia_nim_api_key}
+        return {
+            "model": settings.nim_model,
+            "api_key": settings.nvidia_nim_api_key,
+            "timeout": settings.nim_timeout_s,
+        }
     if name == "openrouter":
         if not settings.openrouter_api_key:
             return None
-        return {"model": settings.openrouter_model, "api_key": settings.openrouter_api_key}
+        return {
+            "model": settings.openrouter_model,
+            "api_key": settings.openrouter_api_key,
+            "timeout": settings.openrouter_timeout_s,
+        }
     if name == "ollama":
         # No key required; availability is a liveness question, answered by the smoke test.
         # Carries its own timeout -- see Settings.ollama_timeout_s.

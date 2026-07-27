@@ -7,7 +7,7 @@ Three claims, each backed by a script in this repo that prints the number:
 
 | claim | measured | evidence |
 |---|---|---|
-| Automatic failover across 4 providers | request failures **31.2% → 0.0%** at a 30% provider-failure rate (n=1000/arm) | [`results/chaos_report.md`](results/chaos_report.md) |
+| Automatic failover across 4 providers, p95-ordered | request failures **31.2% → 0.1%** at a 30% provider-failure rate (n=1000/arm) | [`results/chaos_report.md`](results/chaos_report.md) |
 | Every response scored before it reaches a user | citation / depth / coherence, gate at 0.70 | [`results/provider_matrix.md`](results/provider_matrix.md) |
 | Prompt-injection hardening | **100%** of 41 attacks blocked, **0%** false positives on 40 benign passages | [`results/security_report.md`](results/security_report.md) |
 
@@ -30,8 +30,8 @@ LlamaIndex Workflow ── Planner ──► Researcher ──► Synthesizer
   fallback chain              web_search / fetch_url
   retries + cooldown
       │
-  ┌───┴────┬──────────┬────────┐
-  ▼        ▼          ▼        ▼
+  ┌──────┴─────┬────────┬──────────┐
+  ▼            ▼        ▼          ▼
 Gemini  NVIDIA NIM  OpenRouter  Ollama (local)
       │
       ▼
@@ -103,7 +103,10 @@ bash scripts/run_garak.sh                  # model-level probes against the runn
   tracks hand labels; read it before trusting the provider matrix. Citation sub-scores do
   not depend on the judge at all.
 - **N = 4, not 5.** Azure OpenAI was planned and dropped for lack of access. Four providers
-  — three independent cloud vendors plus a local terminal tier — is the honest count.
+  — three independent cloud vendors plus a local tier — is the honest count.
+- **Latency figures are serial.** Ollama is one local process and will queue under the
+  researcher's concurrent fan-out in a way the hosted providers will not, so its third
+  place in the chain is honest for sequential work and optimistic under load.
 
 ## Layout
 

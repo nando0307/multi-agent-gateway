@@ -3,7 +3,7 @@
 **Repo:** `~/dev/multi-agent-gateway/multi-agent-gateway/`
 **Stack:** LiteLLM (Router/failover) · LlamaIndex (agent workflow) · pytest · garak + bandit
 **Timeline:** 10 working days (1–2 weeks)
-**Status:** Phases 0, 2–5, 8, 9 done · Phase 1 running · Phases 6-validation, 7, garak queued
+**Status:** Phases 0–5, 8, 9 done · Phases 6-validation, 7, garak remaining
 **Last updated:** 2026-07-27
 **Providers (N=4):** Gemini · NVIDIA NIM · OpenRouter · Ollama (local) — *Azure OpenAI dropped, no access*
 **Search:** Tavily · **Judge:** `openrouter/openai/gpt-oss-120b` (different model from every routed one)
@@ -559,4 +559,7 @@ validation".
 | 2026-07-27 | — | Judge guard reworked from provider-level to model-level | — | Provider-level blocked any judge sharing an account. Self-preference is a *model* scoring itself, so the check compares underlying model names — `openrouter/google/gemini-…` is still caught as `gemini/gemini-…`. Shared-account caveat is printed into the matrix report, not buried |
 | 2026-07-27 | 6 | `judge_agreement.py` — two-phase harness | — | Sheet is generated *without* judge scores; seeing them first would measure compliance, not agreement. Spearman verified against perfect/inverse/tied cases |
 | 2026-07-27 | 4 | On-disk page cache | — | Matrix would otherwise re-download every page once per provider. Scope check still runs on every call; the cache short-circuits the network, never the policy |
+| 2026-07-27 | 1 | Latency benchmark, n=20/provider | chain **openrouter → gemini → ollama → nim** | Both placeholder assumptions overturned. Gemini was first by guess: it is 5x slower than OpenRouter on p95 and the only provider to fail (1/20). The local tier was assumed slowest and pinned last: it is not — p95 23.6s vs NIM's 138.3s, and the tightest p50/p95 spread in the set. Chain order does not affect P(all fail), so there was no availability reason to override the data |
+| 2026-07-27 | 2 | Per-provider timeouts derived from measured p95 | — | The global 45s sat below NIM's 138s p95, so the gateway would have abandoned NIM on its own normal tail and manufactured failovers that were not outages. Each timeout is now ~2x that provider's measured p95 |
+| 2026-07-27 | 3 | Chaos study re-run against the measured chain | **31.2% → 0.1%** @ p=0.3, n=1000 | `chaos_run.py` had its own hardcoded chain; it now imports `DEFAULT_CHAIN`, because a chaos number describing a chain the system does not ship is worse than no number |
 | 2026-07-27 | 8 | garak 0.15.1 installed, REST config verified | — | `request_timeout` defaulted to 20s (too short for a research call); `promptinject.HijackHateHumansMini` does not exist. Probe set bounded — each probe is a full research run |
