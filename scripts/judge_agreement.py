@@ -112,6 +112,13 @@ def cmd_generate(args) -> int:
     REPORTS.write_text(json.dumps(reports, indent=2))
     SHEET.write_text("\n".join(json.dumps(r) for r in picked) + "\n")
 
+    write_sheet(reports)
+    print(f"\nwrote {SHEET}  ({len(picked)} reports to label)")
+    print(f"wrote {ROOT/'results'/'label_sheet.md'}  <- read this, fill the sheet, then run: judge_agreement.py score")
+    return 0
+
+
+def write_sheet(reports: list[dict]) -> None:
     md = ROOT / "results" / "label_sheet.md"
     md.write_text(
         "# Hand-labelling sheet\n\n"
@@ -128,8 +135,64 @@ def cmd_generate(args) -> int:
             for r in reports
         )
     )
-    print(f"\nwrote {SHEET}  ({len(picked)} reports to label)")
-    print(f"wrote {md}  <- read this, fill the sheet, then run: judge_agreement.py score")
+
+
+def cmd_regenerate(args) -> int:
+    """Re-run the reports that came back empty, then rebuild the sheet.
+
+    An empty report is not a bad report -- it is a broken one, and it renders in the sheet
+    as a bare question with nothing under it. Labelling that measures nothing. Any row
+    regenerated here has its labels reset to null, because scores attached to the old
+    (blank) text do not describe the new text.
+    """
+    reports = json.loads(REPORTS.read_text())
+    targets = [r for r in reports
+               if (args.ids and r["label_id"] in args.ids)
+               or (not args.ids and len(r["report"].strip()) < args.min_chars)]
+    if not targets:
+        print("nothing to regenerate")
+        return 0
+
+    settings = get_settings()
+    gateway = build_gateway(settings=settings)
+    by_id = {r["label_id"]: r for r in reports}
+    regenerated = []
+
+    for item in targets:
+        print(f"regenerating {item['label_id']} ({item['question_id']} on {item['provider']}) "
+              f"-- was {len(item['report'])} chars", flush=True)
+        try:
+            runner = build_runner(tavily_key=settings.tavily_api_key)
+            result, _ = run_research(
+                item["question"], gateway, runner, model=item["provider"]
+            )
+        except Exception as exc:
+            print(f"   failed: {type(exc).__name__}: {str(exc)[:70]}")
+            continue
+        if not result.report.strip():
+            print("   still empty -- leaving as is")
+            continue
+        by_id[item["label_id"]]["report"] = result.report
+        regenerated.append(item["label_id"])
+        print(f"   now {len(result.report)} chars")
+
+    if not regenerated:
+        print("\nnothing changed")
+        return 1
+
+    REPORTS.write_text(json.dumps(list(by_id.values()), indent=2))
+    write_sheet(list(by_id.values()))
+
+    labels = [json.loads(line) for line in SHEET.read_text().splitlines() if line.strip()]
+    for row in labels:
+        if row["label_id"] in regenerated:
+            for key in list(row):
+                if key.endswith(("_depth", "_coherence")):
+                    row[key] = None
+    SHEET.write_text("\n".join(json.dumps(r) for r in labels) + "\n")
+
+    print(f"\nregenerated {len(regenerated)}: {', '.join(regenerated)}")
+    print("their labels were reset to null -- the old scores described the blank text")
     return 0
 
 
@@ -267,6 +330,11 @@ def main() -> int:
     g = sub.add_parser("generate", help="produce reports and an unlabelled sheet")
     g.add_argument("--n", type=int, default=20)
     g.set_defaults(func=cmd_generate)
+    r = sub.add_parser("regenerate", help="re-run reports that came back empty")
+    r.add_argument("--ids", nargs="*", default=None, help="specific label ids")
+    r.add_argument("--min-chars", type=int, default=50)
+    r.set_defaults(func=cmd_regenerate)
+
     s = sub.add_parser("score", help="compute agreement from the filled sheet")
     s.add_argument("--rater", default=None, help="who or what produced the labels")
     s.add_argument("--rater-type", choices=["human", "model"], default=None,

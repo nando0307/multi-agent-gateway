@@ -61,18 +61,29 @@ class Settings(BaseSettings):
     openrouter_model: str = "openrouter/mistralai/mistral-small-3.2-24b-instruct"
 
     ollama_api_base: str = "http://localhost:11434"
-    ollama_model: str = "ollama_chat/qwen3.5:9b"
+    # 4b, not 9b. The 9b variant spends thousands of tokens reasoning before it answers --
+    # a single synthesis call ran past 10 minutes, which made the local tier impractical to
+    # include in the eval matrix. The tier's job is to be a terminator that cannot
+    # rate-limit, not to be the strongest model in the chain; 4b fills that role at a
+    # fraction of the overhead. Being the weakest tier is a feature here: it is what makes
+    # the silent-regression finding real.
+    ollama_model: str = "ollama_chat/qwen3.5:4b"
     # The local tier needs its own budget. A timeout tuned for a hosted flash model kills
     # local inference outright -- the terminal tier would then fail on every request, which
     # is the opposite of what it is there for. Measured: a cold 9B load plus a reasoning
     # preamble runs well past 45s on a laptop.
-    ollama_timeout_s: float = 300.0
-    # Ollama defaults to a 4096-token context. qwen3.5 is a reasoning model that spent 2419
-    # completion tokens on a two-sentence request, so a synthesis prompt carrying several
-    # documents overran the window and came back with an EMPTY message: reasoning consumed
-    # the whole budget. 4 of 5 local-tier reports in the first label batch were blank
-    # because of this. Raise the window and cap the thinking budget.
-    ollama_num_ctx: int = 32768
+    # Measured, not guessed: a real synthesis takes ~214s on this hardware. The cost is
+    # GENERATION, not context -- qwen3.5:4b emits ~4900 tokens (mostly reasoning) at
+    # ~23 tok/s to produce a 1000-character answer. Shrinking num_ctx does not help, so
+    # the timeout has to accommodate the tier rather than the tier be tuned to the timeout.
+    ollama_timeout_s: float = 400.0
+    # Sized from measurement, not guessed. A real synthesis prompt (3 sources) is ~2966
+    # tokens; qwen3.5 then spends ~2400 more on reasoning before it writes anything. The
+    # 4096 default left no room to generate, so the message came back EMPTY -- 4 of 5
+    # local-tier reports in the first label batch were blank because of this. 8192 fits the
+    # prompt with ~5k of generation headroom. 32768 was tried first and was far slower for
+    # no benefit: the window only has to hold the prompt, not be as large as possible.
+    ollama_num_ctx: int = 8192
 
     # --- tools -------------------------------------------------------------------
     tavily_api_key: str | None = None

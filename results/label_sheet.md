@@ -142,7 +142,11 @@ The provided document focuses on strategies for improving remote code reviews ra
 
 **Question:** What is the current levelised cost of green hydrogen and how far is it from stated 2030 targets?
 
+Current levelised costs for renewable hydrogen range between €4.18 and €9.60 per kg in Europe according to reported data [1]. Specific tool calculations indicate a LCOH of $3.67/kg at a capacity factor of 55% but rising to $4.18/kg at 40% based on default inputs [1].
 
+The IEA provides base technology CAPEX estimates for electrolysis between $420 and $615 per kW by 2030, though this is a capital cost rather than total production price [1]. However, the source does not explicitly state a specific price target for green hydrogen in 2030 to compare against current costs.
+
+The provided text attributes its data to personal knowledge and educational purposes without citing official institutional reports as primary sources [1]. Additionally, some forecasts regarding electrolyzer cost reductions are described by the author as "VERY optimistic" due to potential material inflation [1].
 
 `human_depth`: ___   `human_coherence`: ___
 
