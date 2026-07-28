@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     # independently (PLAN.md Phase 1). Verify the slug against openrouter.ai/models.
     openrouter_model: str = "openrouter/mistralai/mistral-small-3.2-24b-instruct"
 
+    groq_api_key: str | None = None
+    groq_model: str = "groq/llama-3.3-70b-versatile"
+    groq_timeout_s: float = 60.0
+
     ollama_api_base: str = "http://localhost:11434"
     # 4b, not 9b. The 9b variant spends thousands of tokens reasoning before it answers --
     # a single synthesis call ran past 10 minutes, which made the local tier impractical to

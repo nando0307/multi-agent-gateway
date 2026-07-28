@@ -32,13 +32,18 @@ PRIMARY_ALIAS = "research-primary"
 #: residual failure rate (that is P(all fail), which is order-independent), so there was no
 #: availability reason to override the measurement. Caveat: these are serial numbers, and
 #: Ollama is a single local process that will queue under concurrent fan-out.
-DEFAULT_CHAIN: tuple[str, ...] = ("openrouter", "gemini", "ollama", "nim")
+#: Ollama was the terminal tier until 2026-07-28. It was replaced by Groq: a synthesis
+#: call took ~214s locally (generation-bound, ~23 tok/s), which made a 30-question x
+#: 4-provider matrix a 6-8 hour run. See PLAN.md for what that cost -- the chain is now
+#: all-cloud, so it no longer terminates in something that cannot rate-limit.
+DEFAULT_CHAIN: tuple[str, ...] = ("openrouter", "gemini", "groq", "nim")
 
 #: litellm model-string prefixes per provider, used by the judge-independence guard.
 PROVIDER_PREFIXES: dict[str, tuple[str, ...]] = {
     "gemini": ("gemini/", "gemini-", "vertex_ai/"),
     "nim": ("nvidia_nim/",),
     "openrouter": ("openrouter/",),
+    "groq": ("groq/",),
     "ollama": ("ollama/", "ollama_chat/"),
 }
 
@@ -72,6 +77,14 @@ def provider_params(name: str, settings: Settings) -> dict[str, Any] | None:
             "model": settings.openrouter_model,
             "api_key": settings.openrouter_api_key,
             "timeout": settings.openrouter_timeout_s,
+        }
+    if name == "groq":
+        if not settings.groq_api_key:
+            return None
+        return {
+            "model": settings.groq_model,
+            "api_key": settings.groq_api_key,
+            "timeout": settings.groq_timeout_s,
         }
     if name == "ollama":
         # No key required; availability is a liveness question, answered by the smoke test.

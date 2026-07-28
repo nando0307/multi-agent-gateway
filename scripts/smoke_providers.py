@@ -50,11 +50,11 @@ def main() -> int:
     print("-" * 68)
 
     # The judge is checked separately: it is deliberately not in the router.
-    if settings.judge_api_key:
+    if settings.resolve_judge_key():
         try:
             settings.assert_judge_is_independent()
             litellm.completion(
-                model=settings.judge_model, api_key=settings.judge_api_key,
+                model=settings.judge_model, api_key=settings.resolve_judge_key(),
                 messages=PROMPT, max_tokens=16, timeout=30,
             )
             print(f"{'judge':<12} {'ok':<8} {'-':>9}  {settings.judge_model}")
