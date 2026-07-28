@@ -46,7 +46,11 @@ from tests.conftest import FAIL_429, FAIL_500, make_settings  # noqa: E402
 # Imported, never hardcoded: a chaos number that describes a chain the system does not
 # actually ship is worse than no number. Phase 1 reordered this and the study must follow.
 CHAIN = DEFAULT_CHAIN
-LOCAL_TIER = "ollama"
+# There is no local tier any more -- Groq replaced Ollama on 2026-07-28. Nothing in the
+# chain is now immune to rate limiting, so every provider gets the same fault model and
+# --local-fail no longer applies to anything. That is a real weakening of the result, not
+# a bookkeeping change: the old residual rate depended on a tier that could not 429.
+LOCAL_TIER = None
 QUESTION = [{"role": "user", "content": "Summarise recent progress in grid-scale storage."}]
 
 # Retry backoff is real time spent sleeping. Against a mocked transport it adds hours of
@@ -76,13 +80,11 @@ def independent_schedule(n: int, p: float, rng: random.Random) -> list[bool]:
 
 
 def build_schedules(n, p, model, rng, local_fail: float) -> dict[str, list[bool]]:
-    """Ollama is local: it cannot rate-limit, but it is not infallible.
+    """Fault schedule per provider.
 
-    Giving the terminal tier a 0% failure rate would be a modelling gift that drives the
-    residual rate to exactly zero and makes the headline number unfalsifiable. Local
-    inference fails for its own reasons -- OOM, model not pulled, server not running -- so
-    it gets a small independent failure rate instead. ``--local-fail 0`` reproduces the
-    optimistic variant.
+    With LOCAL_TIER set, that tier got a small independent failure rate instead of the
+    sticky cloud model, on the grounds that local inference fails for its own reasons but
+    cannot be rate-limited. It is None now, so every tier gets the same sticky model.
     """
     sched = {}
     for name in CHAIN:
@@ -230,9 +232,12 @@ def main() -> int:
         f"`n = {args.n}` requests per arm per fault rate · fault model = **{args.fault_model}** "
         f"· seed = {args.seed} · chain = {' -> '.join(CHAIN)}",
         "",
-        f"The local terminal tier is given an independent **{args.local_fail:.0%}** failure rate "
-        "(OOM, model not loaded, server down). Setting it to zero would drive the residual rate "
-        "to exactly zero and make the headline unfalsifiable.",
+        ("Every tier is cloud-hosted and gets the same sticky fault model. There is no longer "
+         "a local tier immune to rate limiting -- Groq replaced Ollama for speed -- so the "
+         "residual rate here is genuinely bounded by all four providers failing together, "
+         "not by an assumption about a backstop."
+         if LOCAL_TIER is None else
+         f"The local terminal tier is given an independent {args.local_fail:.0%} failure rate."),
         "",
         "Both arms see **identical** seeded faults and identical requests. The baseline is a "
         "single provider *with* retries (`num_retries=2`), not a strawman without them.",
@@ -283,10 +288,10 @@ def main() -> int:
         "* Provider outages are modelled as independent across providers. Correlated failure "
         "(a shared upstream) is mitigated by choosing an OpenRouter model from a different "
         "vendor than Gemini/NIM, not by this experiment.",
-        f"* The residual {headline['gateway_failure_pct']:.1f}% is dominated by the assumed "
-        f"{args.local_fail:.0%} local-tier failure rate. That assumption is doing real work in "
-        "these numbers; it is stated rather than hidden, and `--local-fail 0` shows the "
-        "optimistic variant.",
+        "* All four tiers are cloud providers, so a correlated outage (shared upstream, "
+        "shared region) would take more of the chain than this independent-failure model "
+        "assumes. The previous version of this study had a local tier that could not "
+        "rate-limit, which made the residual rate structurally lower; that is gone.",
         "",
     ]
     (results / "chaos_report.md").write_text("\n".join(lines))

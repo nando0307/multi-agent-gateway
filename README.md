@@ -7,7 +7,7 @@ Three claims, each backed by a script in this repo that prints the number:
 
 | claim | measured | evidence |
 |---|---|---|
-| Automatic failover across 4 providers, p95-ordered | request failures **31.2% → 0.1%** at a 30% provider-failure rate (n=1000/arm) | [`results/chaos_report.md`](results/chaos_report.md) |
+| Automatic failover across 4 providers, p95-ordered | request failures **31.2% → 0.2%** at a 30% provider-failure rate (n=1000/arm) | [`results/chaos_report.md`](results/chaos_report.md) |
 | Every response scored before it reaches a user | citation / depth / coherence, gate at 0.70 | [`results/provider_matrix.md`](results/provider_matrix.md) |
 | Prompt-injection hardening | **100%** of 41 attacks blocked, **0%** false positives on 40 benign passages | [`results/security_report.md`](results/security_report.md) |
 
@@ -33,8 +33,7 @@ LlamaIndex Workflow ── Planner ──► Researcher ──► Synthesizer
       │
   ┌──────────┴──┬─────────────┬──────────┐
   ▼             ▼             ▼          ▼
-OpenRouter   Gemini   Ollama (local)   NVIDIA NIM
- p95 4.6s    23.1s        23.6s          138.3s
+OpenRouter    Gemini      Groq      NVIDIA NIM
       │
       ▼
  QualityGate — score, retry once on another provider, never return a failure silently
@@ -70,8 +69,6 @@ uv run gateway providers  # the chain that will actually be used, and N
 uv run gateway research "How much grid-scale storage was added in 2024?"
 uv run gateway serve      # HTTP API on :8000
 ```
-
-Ollama needs no key: `ollama serve && ollama pull qwen3.5:9b`.
 
 ## Reproducing the numbers
 
@@ -109,9 +106,12 @@ bash scripts/run_garak.sh                  # model-level probes against the runn
   absolute gate threshold. Citation sub-scores do not depend on the judge at all.
 - **N = 4, not 5.** Azure OpenAI was planned and dropped for lack of access. Four providers
   — three independent cloud vendors plus a local tier — is the honest count.
-- **Latency figures are serial.** Ollama is one local process and will queue under the
-  researcher's concurrent fan-out in a way the hosted providers will not, so its third
-  place in the chain is honest for sequential work and optimistic under load.
+- **The chain no longer terminates in something that cannot rate-limit.** Ollama held that
+  role until it proved too slow to evaluate (~214s per synthesis, generation-bound) and was
+  replaced by Groq. All four tiers are now cloud providers, so a correlated outage would
+  take more of the chain than the independent-failure model assumes. The cost is visible at
+  high fault rates: the residual was 0.1% with a local backstop and is 6.6% without one at
+  a 50% provider-failure rate. At 30% it is essentially unchanged.
 
 ## Layout
 
