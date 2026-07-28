@@ -24,6 +24,8 @@ echo "== secret scan of tracked files =="
 if git ls-files -z \
    | grep -zZv -e '^src/gateway/security/redaction.py$' \
                 -e '^tests/test_redaction.py$' \
+                -e '^scripts/run_security_scans.sh$' \
+                -e '^.github/workflows/ci.yml$' \
                 -e '^datasets/' \
    | xargs -0 grep -nEI '(sk-ant-|sk-or-v1-|nvapi-|AIza[0-9A-Za-z_-]{20,}|tvly-)' ; then
   echo "SECRET-LIKE STRING FOUND IN A TRACKED FILE"; exit 1

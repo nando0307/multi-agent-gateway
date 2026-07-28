@@ -1,0 +1,95 @@
+name: ci
+
+# The whole suite is offline by design -- provider behaviour comes from litellm's
+# mock_response layer, so CI needs no API keys and cannot be broken by a provider
+# outage. If a test here ever needs a secret, that test is in the wrong file.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Assert the suite really is offline
+        # A test that reaches the network would pass locally on a machine with keys and
+        # fail here for reasons that look unrelated. Better to fail loudly and early.
+        run: |
+          if grep -rnE 'GEMINI_API_KEY|OPENROUTER_API_KEY|NVIDIA_NIM_API_KEY|TAVILY_API_KEY' tests/ ; then
+            echo "::error::tests reference a real credential; they must run offline"
+            exit 1
+          fi
+
+      - name: pytest
+        run: uv run pytest -q
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: bandit
+        run: uv run bandit -r src/ -ll
+
+      - name: pip-audit
+        run: uv run pip-audit --progress-spinner off || true
+
+      - name: Secret scan of tracked files
+        # Some paths legitimately contain key-shaped strings and are excluded by path
+        # rather than by weakening the pattern: the redaction module (its patterns ARE
+        # key shapes), its test (sentinel keys are the point), the attack corpus, and the
+        # two scanners themselves -- which would otherwise flag their own pattern lists.
+        run: |
+          if git ls-files \
+             | grep -vE '^(src/gateway/security/redaction\.py|tests/test_redaction\.py|scripts/run_security_scans\.sh|\.github/workflows/ci\.yml|datasets/)' \
+             | xargs grep -nEI '(sk-ant-|sk-or-v1-|nvapi-|AIza[0-9A-Za-z_-]{20,}|tvly-)' ; then
+            echo "::error::key-shaped string found in a tracked file"
+            exit 1
+          fi
+          echo "clean"
+
+  injection:
+    # The injection corpus is deterministic and needs no model, so the block rate and
+    # false-positive rate are regression-tested on every push rather than measured once.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Injection block rate and false-positive rate
+        run: uv run python scripts/eval_injection.py
