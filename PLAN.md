@@ -6,12 +6,13 @@
 **Status:** Phases 0–6, 7, 9 done · Phase 8 in progress (garak: DanInTheWild done, encoding.InjectBase64
 ~40% as of 2026-07-30 17:00, promptinject.HijackHateHumans not yet started, baseline run + bandit/leak
 writeup still needed) · human label gate still open
-**Last updated:** 2026-07-30
+**Last updated:** 2026-07-31
 **Providers (N=4):** Gemini · NVIDIA NIM · OpenRouter · Groq — *Azure OpenAI dropped, no access; Ollama
 dropped from the default chain 2026-07-28, see D3*
 **Search:** Tavily (+ Parallel.ai fallback, added 2026-07-29) · **Judge:** `nvidia_nim/deepseek-ai/deepseek-v4-flash`
 (different model from every routed one; swapped from the paid `openrouter/openai/gpt-oss-120b` 2026-07-30
-after OpenRouter credits ran out — see Progress log; `judge_agreement.md` still reflects the old judge)
+after OpenRouter credits ran out — see Progress log; `judge_agreement.md` re-validated against it
+2026-07-31, `provider_matrix.md` composites still carry the old judge's calibration)
 
 ---
 
@@ -537,14 +538,20 @@ validation".
   `results/latency.md` before the "after measuring" clause on the resume is true.
   First result in: Gemini p50 9.3s / p95 23.1s / 1 failure in 20 — a poor primary, and it
   currently sits first in the chain. The benchmark demoting it is the point of this phase.
-* **Phase 6 — run against a *model* rater, not a human.** Claude Opus 5 scored the 18
-  reports: depth ρ=0.88, coherence ρ=0.921, both clear of the 0.6 threshold. That shows the
-  judge is not idiosyncratic relative to a stronger model. It is **not** human validation —
-  two models can share a blind spot — so `results/judge_agreement.md` labels itself
-  inter-model agreement and the human gate stays open. To close it, re-score the same sheet
-  by hand using `human_depth`/`human_coherence` keys and re-run.
-* **Judge inflates coherence by +1.06** against the reference rater (depth is near-neutral
-  at +0.28). Provider *comparison* is unaffected — a constant offset cancels — but the
+* **Phase 6 — run against a *model* rater, not a human.** Claude Opus 5 scored the reports:
+  against the current `deepseek-v4-flash` judge, depth ρ=0.903, coherence ρ=0.879 on n=17,
+  both clear of the 0.6 threshold. That shows the judge is not idiosyncratic relative to a
+  stronger model. It is **not** human validation — two models can share a blind spot — so
+  `results/judge_agreement.md` labels itself inter-model agreement and the human gate stays
+  open. To close it, re-score the same sheet by hand using `human_depth`/`human_coherence`
+  keys and re-run.
+* **n is 17.** 18 reports exist in `label_reports.json`, but L07's reference labels were
+  nulled when its empty ollama report was regenerated (`ba25cc2`) and never re-scored, so
+  `score` drops it. The 2026-07-27 run reported n=18 because it predated that regeneration —
+  it counted an L07 row whose labels no longer described the report text. Re-label L07 to
+  get it back.
+* **Judge inflates coherence by +0.65** against the reference rater (depth is near-neutral
+  at +0.35). Provider *comparison* is unaffected — a constant offset cancels — but the
   absolute 0.70 gate threshold sits against an inflated coherence term and should be
   recalibrated before it is treated as meaningful.
 * **Phase 7** — `run_eval.py` ready; run after the judge clears the gate.
@@ -596,3 +603,4 @@ validation".
 | 2026-07-30 | 8 | `JUDGE_MODEL` swap chased three more free-tier dead ends before landing: OpenRouter's free-model tier has a hard **50 req/day account-wide** cap (exhausted, doesn't reset for ~20h) — not a transient limit tenacity can retry through. Tried a native Gemini key next (`gemini-3.1-pro-preview`, `gemini-2.0-flash`: `limit: 0` — not provisioned on this project at all; `gemini-3.5-flash`: real but tiny, **20 req/day**, also exhausted immediately). Only the exact model already used as the routed `gemini` provider tier has real headroom on this key — every other Gemini model is either unprovisioned or quota-starved | **final:** `nvidia_nim/deepseek-ai/deepseek-v4-flash` | Landed on NVIDIA NIM: distinct vendor from all 4 routed models (avoided `meta/llama-3.3-70b-instruct` and `mistralai/*` on NIM specifically because groq/openrouter already use that vendor family), no daily-cap error seen, `deepseek-v4-pro` timed out but `-flash` answers in a few seconds. Also broadened `Judge._ask`'s retry from `RateLimitError`-only to also cover `Timeout` and `InternalServerError` (hit all three across the three models tried this stretch) — 4/4 smoke requests then succeeded cleanly. **Still invalidates** `judge_agreement.md` and the Phase 7 `provider_matrix.md` composite scores, which were measured against the original paid `gpt-oss-120b` judge — re-validate before trusting those numbers with precision; not blocking since garak doesn't depend on the composite score, only the report text |
 | 2026-07-30 | 1 | Attempted `bench_latency.py --only groq` to close the gap left by the Ollama→Groq swap (Groq's chain position was never independently measured — it inherited Ollama's old slot for practical reasons, not on data) | **failed, not written** | 19/20 calls hit Groq's own **daily token cap** (100,000 TPD, at 99,977/100,000 from the day's cumulative testing — garak run included) before a single clean sample. Discarded rather than reported (p50=p95=1530ms off one lucky call is not a measurement). `latency.json`/`latency.md` cleaned of both the bad Groq row and the now-irrelevant Ollama row; `latency.md` now explicitly flags Groq's chain position as unverified rather than implying it like the old Ollama-era text did. Re-run once the daily quota resets, with no concurrent load on the same key |
 | 2026-07-30 | 8 | garak run against the gateway (judge fix finally durable — no crashes). `dan.DanInTheWild` ran to completion (256/256 processed) over ~10h wall clock (uneven pacing, some attempts slow). The "256" per-probe count was itself a surprise — each of the 3 configured probes runs its own ~256 attempts, not 256 combined as originally assumed, making a full 3-probe scan a much bigger commitment (~6-10h+) than scoped. Stopped intentionally after `dan.DanInTheWild` rather than let `encoding.InjectBase64`/`promptinject.HijackHateHumans` run unbounded; the stop watcher itself got delayed (background-task lifetime limit), so it fired ~54% into `encoding.InjectBase64` instead of exactly at the boundary — that probe's partial data (138/256, no final score) is discarded, not reported | **dan.DanInTheWild: 22/34 scored bypassed mitigation (64.7%, 95% CI 47-79%)** | Written to `results/security_report.md` as a new "Model-level susceptibility (garak) -- partial" section. 222/256 prompts were unscored — mostly `/research`'s 1000-char length cap rejecting long jailbreak templates before they reached a model (real hardening, not a measurement gap, though garak can't tell the two apart in its own count). No raw-provider baseline run yet (`run_garak.sh`'s second half is still a manual reminder, never automated) — this is a susceptibility number, not yet a before/after hardening delta. `encoding.InjectBase64`, `promptinject.HijackHateHumans`, and the baseline comparison remain open follow-up work |
+| 2026-07-31 | 6 | Re-validated judge agreement against the current `nvidia_nim/deepseek-ai/deepseek-v4-flash` judge (`judge_agreement.py score`, re-judging the same 18 stored reports against the unchanged Claude Opus 5 reference labels) | depth **ρ=0.903** (bias +0.35, 100% within ±1), coherence **ρ=0.879** (bias +0.65, 88.2% within ±1), **n=17** | PASS — clears the 0.6 threshold on both dimensions, so the judge swap did not cost agreement; coherence inflation dropped from +1.06 to +0.65. n fell 18→17 because L07's reference labels were nulled when its empty ollama report was regenerated at `ba25cc2` and never re-scored — the old n=18 report predated that and counted a row whose labels no longer matched the report text, so this is the first self-consistent run. `JUDGE_API_KEY` was empty and now carries the NVIDIA NIM key (same provider as the judge model, different model, so D5 independence holds). **Still outstanding:** `provider_matrix.md`'s composite scores were measured against the retired gpt-oss-120b judge and were not re-run |

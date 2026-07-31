@@ -98,12 +98,16 @@ bash scripts/run_garak.sh                  # model-level probes against the runn
   two.
 - **garak probes the model, not the tool layer.** Its results and the scope-gate results are
   reported separately rather than blended into one flattering figure.
-- **The judge has been checked against a model, not a human.** Claude Opus 5 scored 18
-  reports independently: depth ρ=0.88, coherence ρ=0.921. That rules out the judge being
+- **The judge has been checked against a model, not a human.** Claude Opus 5 scored 17
+  reports independently: depth ρ=0.903, coherence ρ=0.879. That rules out the judge being
   idiosyncratic, but two models can share a blind spot, so it is not human validation —
   `results/judge_agreement.md` says so explicitly and the human gate stays open. The judge
-  also runs +1.06 high on coherence, which cancels for provider comparison but inflates the
+  also runs +0.65 high on coherence, which cancels for provider comparison but inflates the
   absolute gate threshold. Citation sub-scores do not depend on the judge at all.
+- **`provider_matrix.md`'s composite scores were measured against the retired judge.** Judge
+  agreement was re-validated against `deepseek-v4-flash` on 2026-07-31, but the Phase 7
+  matrix was not re-run, so its absolute composites still carry the old judge's calibration.
+  The provider *ordering* is unaffected by a constant offset; the absolute numbers are stale.
 - **N = 4, not 5.** Azure OpenAI was planned and dropped for lack of access. Four providers
   — three independent cloud vendors plus a local tier — is the honest count.
 - **The chain no longer terminates in something that cannot rate-limit.** Ollama held that
