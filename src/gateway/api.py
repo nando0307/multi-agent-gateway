@@ -8,6 +8,7 @@ bare model.
 
 from __future__ import annotations
 
+import concurrent.futures
 from collections import Counter
 
 from fastapi import FastAPI, HTTPException
@@ -21,6 +22,19 @@ from gateway.security.redaction import register_settings
 from gateway.settings import get_settings
 
 app = FastAPI(title="multi-agent-gateway", version="0.1.0")
+
+# Worst-case fallback/retry chains can sum past any one client's timeout (multiple LLM
+# calls per request, each with its own retry ladder, plus several judge calls with their
+# own backoff). Without a server-side deadline the caller just hangs until it gives up on
+# its own terms -- which is exactly what turned a single slow request into three garak runs
+# crashing outright (garak treats a raw connection timeout as fatal, unlike an HTTP status
+# it can skip). Bounding it here means a slow request fails fast and cleanly with a 504.
+REQUEST_TIMEOUT_S = 480.0
+# ponytail: the abandoned thread keeps running to completion in the background rather than
+# being cancelled -- Python has no clean way to kill a running thread. Fine for bounded
+# scan traffic (garak, smoke tests); if this becomes user-facing at volume, swap to a
+# cancellable async pipeline instead of papering over it with a bigger pool.
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="research")
 
 _settings = get_settings()
 register_settings(_settings)
@@ -53,14 +67,20 @@ class ResearchResponse(BaseModel):
 
 @app.post("/research", response_model=ResearchResponse)
 def research(request: ResearchRequest) -> ResearchResponse:
-    runner = build_runner(tavily_key=_settings.tavily_api_key)
+    runner = build_runner(tavily_key=_settings.tavily_api_key, parallel_key=_settings.parallel_api_key)
     gate = QualityGate(request.threshold or _settings.gate_threshold, _judge)
     METRICS["requests"] += 1
+    future = _executor.submit(run_research, request.question, _gateway, runner, gate=gate)
     try:
-        result, trace = run_research(request.question, _gateway, runner, gate=gate)
+        result, trace = future.result(timeout=REQUEST_TIMEOUT_S)
     except AllProvidersExhausted as exc:
         METRICS["exhausted"] += 1
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except concurrent.futures.TimeoutError as exc:
+        METRICS["timeout"] += 1
+        raise HTTPException(
+            status_code=504, detail=f"research exceeded {REQUEST_TIMEOUT_S}s budget"
+        ) from exc
 
     METRICS["served"] += 1
     for provider in result.served_by:

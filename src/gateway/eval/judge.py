@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass
 
 import litellm
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_random_exponential
 
 from gateway.agents.base import parse_json
 from gateway.settings import Settings, get_settings
@@ -90,6 +91,21 @@ class Judge:
         self.model = self.settings.judge_model
         self.samples = samples
 
+    # Free-tier judge models sit behind a shared, often-overloaded pool (unlike routed
+    # providers, which retry via litellm.Router). RateLimitError (429), Timeout, and
+    # InternalServerError (observed as a 529 "temporarily overloaded") are all normal
+    # traffic for a free model, not an outage -- seen all three across different judge
+    # models while chasing this.
+    @retry(
+        retry=retry_if_exception_type((
+            litellm.exceptions.RateLimitError,
+            litellm.exceptions.Timeout,
+            litellm.exceptions.InternalServerError,
+        )),
+        wait=wait_random_exponential(multiplier=1, max=20),
+        stop=stop_after_attempt(5),
+        reraise=True,
+    )
     def _ask(self, prompt: str) -> str:
         response = litellm.completion(
             model=self.model,
