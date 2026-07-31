@@ -12,3 +12,6 @@ wheels/
 .env
 results/runs/
 .cache/
+
+# generated knowledge graph (regenerate with /understand)
+.ua/
