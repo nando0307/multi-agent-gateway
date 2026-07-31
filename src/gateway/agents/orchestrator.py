@@ -76,7 +76,8 @@ class ResearchWorkflow(Workflow):
 
 
 def build_runner(*, resolve_dns: bool = True, budget: RunBudget | None = None,
-                 search_fn=None, fetch_fn=None, tavily_key: str | None = None) -> ToolRunner:
+                 search_fn=None, fetch_fn=None, tavily_key: str | None = None,
+                 parallel_key: str | None = None) -> ToolRunner:
     """Wire the researcher's two tools. Injecting the callables keeps tests offline."""
     from gateway.tools import fetch_url as fetch_mod
     from gateway.tools import web_search as search_mod
@@ -87,7 +88,9 @@ def build_runner(*, resolve_dns: bool = True, budget: RunBudget | None = None,
     runner.register(
         ToolSpec(
             "web_search",
-            search_fn or (lambda query: search_mod.search(query, api_key=tavily_key)),
+            search_fn or (lambda query: search_mod.search(
+                query, api_key=tavily_key, parallel_api_key=parallel_key
+            )),
             "Search the public web.",
         )
     )

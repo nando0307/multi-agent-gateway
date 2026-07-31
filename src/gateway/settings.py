@@ -91,6 +91,9 @@ class Settings(BaseSettings):
 
     # --- tools -------------------------------------------------------------------
     tavily_api_key: str | None = None
+    # Fallback when Tavily's quota is exhausted (its free plan hard-caps at 1000
+    # searches/month, no pay-as-you-go overflow -- see web_search.py).
+    parallel_api_key: str | None = None
 
     # --- eval judge: deliberately NOT in the router's model list -----------------
     judge_api_key: str | None = None

@@ -88,7 +88,7 @@ def cmd_generate(args) -> int:
         provider = providers[i % len(providers)]
         print(f"[{i+1}/{args.n}] {question['id']} on {provider}", flush=True)
         try:
-            runner = build_runner(tavily_key=settings.tavily_api_key)
+            runner = build_runner(tavily_key=settings.tavily_api_key, parallel_key=settings.parallel_api_key)
             result, _ = run_research(question["question"], gateway, runner, model=provider)
         except Exception as exc:
             print(f"   skipped: {type(exc).__name__}")
@@ -162,7 +162,7 @@ def cmd_regenerate(args) -> int:
         print(f"regenerating {item['label_id']} ({item['question_id']} on {item['provider']}) "
               f"-- was {len(item['report'])} chars", flush=True)
         try:
-            runner = build_runner(tavily_key=settings.tavily_api_key)
+            runner = build_runner(tavily_key=settings.tavily_api_key, parallel_key=settings.parallel_api_key)
             result, _ = run_research(
                 item["question"], gateway, runner, model=item["provider"]
             )

@@ -34,7 +34,7 @@ def cmd_research(args) -> int:
     gateway = build_gateway(settings=settings)
     console.print(f"[dim]chain:[/] {' -> '.join(gateway.chain)}\n")
 
-    runner = build_runner(tavily_key=settings.tavily_api_key)
+    runner = build_runner(tavily_key=settings.tavily_api_key, parallel_key=settings.parallel_api_key)
     gate = QualityGate(args.threshold or settings.gate_threshold, judge)
 
     with console.status("researching..."):

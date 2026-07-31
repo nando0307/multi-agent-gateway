@@ -73,7 +73,7 @@ def main() -> int:
     rows: list[dict] = []
     for question in questions:
         for provider in providers:
-            runner = build_runner(tavily_key=settings.tavily_api_key)
+            runner = build_runner(tavily_key=settings.tavily_api_key, parallel_key=settings.parallel_api_key)
             started = time.perf_counter()
             try:
                 result, trace = run_research(
