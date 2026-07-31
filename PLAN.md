@@ -3,10 +3,15 @@
 **Repo:** `~/dev/multi-agent-gateway/multi-agent-gateway/`
 **Stack:** LiteLLM (Router/failover) · LlamaIndex (agent workflow) · pytest · garak + bandit
 **Timeline:** 10 working days (1–2 weeks)
-**Status:** Phases 0–6, 8, 9 done · Phase 7 + garak remaining · human label gate still open
-**Last updated:** 2026-07-27
-**Providers (N=4):** Gemini · NVIDIA NIM · OpenRouter · Ollama (local) — *Azure OpenAI dropped, no access*
-**Search:** Tavily · **Judge:** `openrouter/openai/gpt-oss-120b` (different model from every routed one)
+**Status:** Phases 0–6, 7, 9 done · Phase 8 in progress (garak: DanInTheWild done, encoding.InjectBase64
+~40% as of 2026-07-30 17:00, promptinject.HijackHateHumans not yet started, baseline run + bandit/leak
+writeup still needed) · human label gate still open
+**Last updated:** 2026-07-30
+**Providers (N=4):** Gemini · NVIDIA NIM · OpenRouter · Groq — *Azure OpenAI dropped, no access; Ollama
+dropped from the default chain 2026-07-28, see D3*
+**Search:** Tavily (+ Parallel.ai fallback, added 2026-07-29) · **Judge:** `nvidia_nim/deepseek-ai/deepseek-v4-flash`
+(different model from every routed one; swapped from the paid `openrouter/openai/gpt-oss-120b` 2026-07-30
+after OpenRouter credits ran out — see Progress log; `judge_agreement.md` still reflects the old judge)
 
 ---
 
@@ -79,11 +84,20 @@ lines subclassing LlamaIndex's `CustomLLM` whose `chat()`/`complete()` delegate 
 *This is the single highest-risk integration point in the project — build it on Day 2 and prove it
 with a test that forces the primary down and asserts the agent still answers.*
 
-**D3. Ollama (`qwen3.5:9b`, already installed) is the last fallback tier.**
-It is free, local, and cannot rate-limit — so the chain's tail always terminates in something that
-works, which is what drives `Y%` toward 0. It is also *measurably worse*, which is what makes
-bullet #2's "silent quality regression" real rather than hypothetical. Do not treat that as a
-problem to hide; it's the finding.
+**D3. Ollama (`qwen3.5:9b`, already installed) was the last fallback tier — dropped 2026-07-28.**
+The original reasoning: free, local, cannot rate-limit, so the chain's tail always terminates in
+something that works, which drives `Y%` toward 0; and it is *measurably worse*, which makes
+bullet #2's "silent quality regression" real rather than hypothetical.
+
+That reasoning held for Phase 3 (chaos, still reported against Ollama as the terminal tier — see
+the Progress log) but broke Phase 7's economics: a single local synthesis call ran ~214s
+(generation-bound, ~23 tok/s), which turns a 30-question × 4-provider matrix into a 6–8 hour run.
+Groq replaces it in `DEFAULT_CHAIN`: cloud, fast (comparable to OpenRouter/Gemini), and a distinct
+vendor from the other three. The trade-off this makes: the chain no longer has a tier that
+*cannot* rate-limit, so the "always terminates in something that works" property is weaker than
+it was, and the resume claim should say so rather than imply Ollama's guarantee still holds.
+Ollama's provider config stays in `model_list.py` — it is a config away from being reinstated if a
+future phase needs the no-rate-limit tier back (e.g. a smaller, faster Ollama model).
 
 **D4. Citation accuracy is deterministic first, LLM-judged second.**
 An LLM judging "are these citations accurate?" is unfalsifiable. Instead: cross-check every `[n]`
@@ -107,11 +121,13 @@ Sharing an account with a routed provider *is* a weaker claim than a wholly sepa
 hard-fails on the same model, including the same model reached by a different route
 (`openrouter/google/gemini-...` vs `gemini/gemini-...`), so switching route is not a bypass.
 
-**D6. N=4, and say 4.** Azure OpenAI is out (no access). The fallback chain is Gemini → NVIDIA NIM →
-OpenRouter → Ollama, and it is *better shaped* than a 5th cloud provider would make it: three
-independent cloud vendors plus a local terminal tier that cannot rate-limit. Nothing in the resume
-bullet gets weaker. If Azure access appears mid-build, add it as a 5th entry in `model_list.py` and
-re-run Phases 1 and 3 — those are the only two phases whose numbers depend on N.
+**D6. N=4, and say 4.** Azure OpenAI is out (no access). As of 2026-07-28 the fallback chain is
+OpenRouter → Gemini → Groq → NVIDIA NIM (p95-ordered, see Phase 1) — four independent cloud
+vendors, no local tier (D3). This is a shape change from the original "three cloud + one
+rate-limit-immune local tier" pitch: say N=4 cloud providers, not "including a local terminal
+tier," since that phrase is no longer true of the shipped chain. If Azure access appears mid-build,
+add it as a 5th entry in `model_list.py` and re-run Phases 1 and 3 — those are the only two phases
+whose numbers depend on N.
 
 ---
 
@@ -408,14 +424,14 @@ traced.
       > A run where the request **succeeded** (HTTP 200, no error, within latency SLO) — so every
       > ops dashboard shows green — **but** the composite score fell below the 0.70 gate, on a
       > question the primary provider passed.
-- [ ] `results/provider_matrix.md`: per-provider mean composite + sub-scores, pass rate, and the
+- [x] `results/provider_matrix.md`: per-provider mean composite + sub-scores, pass rate, and the
       regression count with per-case examples (2–3 concrete before/after excerpts — these are what
       you actually talk about in an interview).
 - [x] `tests/test_gate.py` — fabricated-citation report scores low; a good report passes; a gate
       failure triggers exactly one alt-provider retry.
 
 **Acceptance:** matrix complete, regression count computed from real runs.
-**Produces:** bullet #2's `[X]`.
+**Produces:** bullet #2's `[X]` = **11** silent regressions at n=30.
 
 ---
 
@@ -490,8 +506,8 @@ traced.
 
 Fill these only from `results/`:
 
-- `[N]` ← **4** (Gemini, NVIDIA NIM, OpenRouter, Ollama) — confirm all four green in Phase 0 before
-  committing to the number
+- `[N]` ← **4** (Gemini, NVIDIA NIM, OpenRouter, Groq — Ollama dropped from the default chain
+  2026-07-28, see D3) — confirm all four green in Phase 0 before committing to the number
 - `[reasoning]` ← `results/latency.md` — the p95-ordering paragraph
 - `[X]% → [Y]%` ← `results/chaos_report.md`, arm A vs arm B, n=200, with CI
 - bullet 2's `[X]` ← `results/provider_matrix.md` silent-regression count
@@ -571,3 +587,12 @@ validation".
 | 2026-07-27 | — | **Bug: 4 of 5 local-tier reports were empty.** Root cause: Ollama defaults to a 4096-token context and qwen3.5 is a reasoning model — it spent 2419 completion tokens on a two-sentence request, so a synthesis prompt with documents overran the window and returned a blank message | — | Fixed with `num_ctx=32768`; verified a previously-blank question now yields a 1057-char cited report. Also added an `EmptyCompletion` guard: a 200 with no content is now a provider failure that falls through the chain, not a success scored as a merely-poor report |
 | 2026-07-27 | 6 | Judge truncation fix | — | `max_tokens=300` cut long `reason` strings mid-JSON, surfacing as "no parseable score". Raised to 600 and added a regex fallback that recovers the score from a truncated object |
 | 2026-07-27 | 8 | garak 0.15.1 installed, REST config verified | — | `request_timeout` defaulted to 20s (too short for a research call); `promptinject.HijackHateHumansMini` does not exist. Probe set bounded — each probe is a full research run |
+| 2026-07-28 | — | `DEFAULT_CHAIN` swapped Ollama → Groq | N=4 (revised) | Local synthesis ran ~214s/call, making the 120-run Phase 7 matrix a 6–8h job. Groq is a distinct-vendor cloud tier at comparable speed to OpenRouter/Gemini. Trade-off: the chain no longer has a tier immune to rate-limiting (D3); Phase 3's chaos number still stands as measured against Ollama and was not re-run. Ollama's provider config left in `model_list.py`, not deleted |
+| 2026-07-29 | 7 | `run_eval.py --questions 30` run in full (120 runs, ~65 min) | provisional: 7 regressions @ n=9 | Two findings, one artifact one real. **Artifact:** Tavily free-tier quota ran out partway through; `web_search.py`/`researcher.py` swallow search failures into the trace instead of surfacing them, so 21/30 questions got zero search results and every provider scored identically on them (measuring "no evidence", not model quality). `scripts/filter_provider_matrix.py` (new) recomputes the matrix over the 9 questions with intact evidence on every row; raw 30-question data kept at `results/provider_matrix_raw_30q.json`. **Real:** Groq (the new tier from the Ollama swap above) errored `RateLimitError` on 20/30 pinned single-provider runs — confirms the D3 trade-off, a cloud tier that can rate-limit under sustained load. n=9 is too small to trust the per-provider means; re-run the full 30 once Tavily quota resets (cache already covers everything that didn't fail) before this goes in the resume |
+| 2026-07-29 | — | Tavily quota confirmed exhausted for the month (`/usage`: 1000/1000, no paygo overflow) — not a short-cycle limit, won't reset soon. Added Parallel.ai REST search (`api.parallel.ai/v1/search`) as a fallback in `web_search.py`, wired through `settings.parallel_api_key` and `build_runner(parallel_key=...)` at all 5 call sites | — | Root-cause fix in the one shared `search()` function, not per-caller: tries Tavily first, falls through to Parallel on any exception (quota, outage), same on-disk cache either way. Chose the plain REST endpoint over Parallel's MCP server — MCP is for AI-assistant connectors, would've added a JSON-RPC client dependency for the same result a `httpx.post` gets in 10 lines |
+| 2026-07-29 | 7 | Re-ran `run_eval.py --questions 30` with the Parallel fallback live (~92 min; planner-generated sub-questions vary per provider so the cache didn't fully dedupe, hence the longer-than-hoped runtime) | **11 silent regressions @ n=30**, final | Zero-source rows: 51 → **0**. Groq errored `RateLimitError` on 11/30 (down from 20/30 — some retried through on a cooldown gap) confirming the real D3 trade-off. Composite means: gemini 0.782, nim 0.778, openrouter 0.730 (primary), groq 0.703. This is the number for the resume; `provider_matrix.md` is final, `provider_matrix_raw_30q.json`/9-question interim version superseded |
+| 2026-07-29 | 8 | OpenRouter account hit `$0` credits mid-garak-run (confirmed via `/api/v1/credits`), which broke **both** the `openrouter` provider tier and the judge simultaneously — they share the account by D5's design. `api.py` only catches `AllProvidersExhausted`, so every judge failure surfaced as an uncaught 500; garak's REST generator retries 5xx with backoff, so it silently re-ran the full search→fetch→synthesize pipeline per attempt chasing a judge call that couldn't succeed. Diagnosed after ~4.5h stalled at the same attempt count | — | Fix: `JUDGE_MODEL` swapped to `openrouter/openai/gpt-oss-20b:free` (same vendor/family as the prior gpt-oss-120b judge, so D5 independence still holds — `model_identity()` already stripped `:free` before this was needed). Free tier is rate-limited on a shared pool (429s, not credit failures), so added a `tenacity` retry (5 attempts, exponential backoff to 20s) around `Judge._ask` — previously zero retry existed there at all, unlike routed-provider calls which get it from `litellm.Router`. **Caveat this invalidates:** `judge_agreement.md` (ρ=0.88/0.921) and `provider_matrix.md`'s composite scores were measured against the paid 120b judge, not this one — re-validate judge agreement against the new model before trusting Phase 6/7 numbers going forward if precision matters; not re-run yet since garak doesn't depend on it |
+| 2026-07-29 | 8 | A single slow request (multiple LLM calls + several judge calls, each with its own retry ladder) exceeded garak's client-side timeout three separate times (300s, then 600s), and each time garak treated the raw `ReadTimeout` as fatal and crashed the *entire* scan rather than skipping the one attempt — unlike an HTTP status code, which it can route through `skip_codes` | — | Added a hard 480s server-side deadline to `POST /research` (`concurrent.futures.ThreadPoolExecutor` + `future.result(timeout=...)`, returns a clean 504) so a slow request fails fast instead of hanging toward whatever the fallback+retry worst case sums to. `run_garak.sh`'s client timeout raised to 540s (comfortably above the server deadline) and 504 added to `skip_codes`. `ponytail:` the abandoned thread on timeout keeps running rather than being cancelled (Python has no clean thread-kill) — acceptable for bounded scan traffic, would need a cancellable async pipeline if this became user-facing at volume |
+| 2026-07-30 | 8 | `JUDGE_MODEL` swap chased three more free-tier dead ends before landing: OpenRouter's free-model tier has a hard **50 req/day account-wide** cap (exhausted, doesn't reset for ~20h) — not a transient limit tenacity can retry through. Tried a native Gemini key next (`gemini-3.1-pro-preview`, `gemini-2.0-flash`: `limit: 0` — not provisioned on this project at all; `gemini-3.5-flash`: real but tiny, **20 req/day**, also exhausted immediately). Only the exact model already used as the routed `gemini` provider tier has real headroom on this key — every other Gemini model is either unprovisioned or quota-starved | **final:** `nvidia_nim/deepseek-ai/deepseek-v4-flash` | Landed on NVIDIA NIM: distinct vendor from all 4 routed models (avoided `meta/llama-3.3-70b-instruct` and `mistralai/*` on NIM specifically because groq/openrouter already use that vendor family), no daily-cap error seen, `deepseek-v4-pro` timed out but `-flash` answers in a few seconds. Also broadened `Judge._ask`'s retry from `RateLimitError`-only to also cover `Timeout` and `InternalServerError` (hit all three across the three models tried this stretch) — 4/4 smoke requests then succeeded cleanly. **Still invalidates** `judge_agreement.md` and the Phase 7 `provider_matrix.md` composite scores, which were measured against the original paid `gpt-oss-120b` judge — re-validate before trusting those numbers with precision; not blocking since garak doesn't depend on the composite score, only the report text |
+| 2026-07-30 | 1 | Attempted `bench_latency.py --only groq` to close the gap left by the Ollama→Groq swap (Groq's chain position was never independently measured — it inherited Ollama's old slot for practical reasons, not on data) | **failed, not written** | 19/20 calls hit Groq's own **daily token cap** (100,000 TPD, at 99,977/100,000 from the day's cumulative testing — garak run included) before a single clean sample. Discarded rather than reported (p50=p95=1530ms off one lucky call is not a measurement). `latency.json`/`latency.md` cleaned of both the bad Groq row and the now-irrelevant Ollama row; `latency.md` now explicitly flags Groq's chain position as unverified rather than implying it like the old Ollama-era text did. Re-run once the daily quota resets, with no concurrent load on the same key |
+| 2026-07-30 | 8 | garak run against the gateway (judge fix finally durable — no crashes). `dan.DanInTheWild` ran to completion (256/256 processed) over ~10h wall clock (uneven pacing, some attempts slow). The "256" per-probe count was itself a surprise — each of the 3 configured probes runs its own ~256 attempts, not 256 combined as originally assumed, making a full 3-probe scan a much bigger commitment (~6-10h+) than scoped. Stopped intentionally after `dan.DanInTheWild` rather than let `encoding.InjectBase64`/`promptinject.HijackHateHumans` run unbounded; the stop watcher itself got delayed (background-task lifetime limit), so it fired ~54% into `encoding.InjectBase64` instead of exactly at the boundary — that probe's partial data (138/256, no final score) is discarded, not reported | **dan.DanInTheWild: 22/34 scored bypassed mitigation (64.7%, 95% CI 47-79%)** | Written to `results/security_report.md` as a new "Model-level susceptibility (garak) -- partial" section. 222/256 prompts were unscored — mostly `/research`'s 1000-char length cap rejecting long jailbreak templates before they reached a model (real hardening, not a measurement gap, though garak can't tell the two apart in its own count). No raw-provider baseline run yet (`run_garak.sh`'s second half is still a manual reminder, never automated) — this is a susceptibility number, not yet a before/after hardening delta. `encoding.InjectBase64`, `promptinject.HijackHateHumans`, and the baseline comparison remain open follow-up work |
