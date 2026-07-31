@@ -88,9 +88,12 @@ bash scripts/run_garak.sh                  # model-level probes against the runn
 - **The chaos study injects faults at the transport layer.** The routing, retry, cooldown
   and fallback machinery under test is the production code path; only the network is
   simulated. Latency there is structural (mean fallback depth), not wall-clock.
-- **The residual failure rate rests on an assumption.** The local tier is modelled with a
-  2% independent failure rate. Set it to 0 and the residual goes to exactly zero — which
-  would be unfalsifiable rather than impressive. `--local-fail` exposes the knob.
+- **The residual failure rate no longer rests on a backstop assumption.** It used to: a
+  local tier modelled at a 2% independent failure rate, where setting it to 0 drove the
+  residual to exactly zero and made the number unfalsifiable. Since Ollama was dropped
+  (2026-07-28) every tier is cloud-hosted under the same sticky fault model, so the residual
+  is bounded by all four providers failing together. `--local-fail` still exists but applies
+  to nothing.
 - **The injection block rate is in-sample.** The sanitiser's patterns were iterated against
   the corpus they are scored on, so 100% means "the known attack classes are covered", not
   "novel phrasings will be caught". The scope-gate half *does* generalise — it matches on
@@ -109,7 +112,9 @@ bash scripts/run_garak.sh                  # model-level probes against the runn
   matrix was not re-run, so its absolute composites still carry the old judge's calibration.
   The provider *ordering* is unaffected by a constant offset; the absolute numbers are stale.
 - **N = 4, not 5.** Azure OpenAI was planned and dropped for lack of access. Four providers
-  — three independent cloud vendors plus a local tier — is the honest count.
+  — OpenRouter, Gemini, Groq and NVIDIA NIM, four independent cloud vendors — is the honest
+  count. It was three cloud vendors plus a local Ollama tier until 2026-07-28; see the next
+  bullet for what that swap cost.
 - **The chain no longer terminates in something that cannot rate-limit.** Ollama held that
   role until it proved too slow to evaluate (~214s per synthesis, generation-bound) and was
   replaced by Groq. All four tiers are now cloud providers, so a correlated outage would
