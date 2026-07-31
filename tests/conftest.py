@@ -9,11 +9,25 @@ stand-in for it -- only the transport is faked.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from gateway.llm.model_list import PRIMARY_ALIAS
 from gateway.llm.router import Gateway
 from gateway.settings import Settings
+
+# `import litellm` calls load_dotenv() at import time (litellm/__init__.py), which pushes the
+# developer's real .env into os.environ. pydantic-settings then reads os.environ regardless of
+# `_env_file=None`, so a test constructing Settings picks up whatever happens to be in that
+# machine's .env -- "offline, no keys needed" quietly becomes "offline, and passes only if your
+# .env leaves the right fields blank". Strip every Settings-backed name here, at conftest import
+# time, so it happens before any test module is collected.
+#
+# Derived from model_fields rather than a hardcoded list: a new setting is covered automatically
+# instead of reintroducing this bug the next time one is added.
+for _field in Settings.model_fields:
+    os.environ.pop(_field.upper(), None)
 
 #: Sentinels understood by litellm's mock layer.
 FAIL_500 = "litellm.InternalServerError"
