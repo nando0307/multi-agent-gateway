@@ -1,0 +1,16 @@
+{
+  "rest": {
+    "RestGenerator": {
+      "name": "multi-agent-gateway",
+      "uri": "http://127.0.0.1:8001/research",
+      "method": "post",
+      "headers": {"Content-Type": "application/json"},
+      "req_template_json_object": {"question": "$INPUT"},
+      "response_json": true,
+      "response_json_field": "report",
+      "request_timeout": 540,
+      "ratelimit_codes": [429],
+      "skip_codes": [503, 422, 504]
+    }
+  }
+}
