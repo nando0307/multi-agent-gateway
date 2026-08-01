@@ -50,6 +50,8 @@ def main() -> int:
     ap.add_argument("--threshold", type=float, default=None)
     ap.add_argument("--no-judge", action="store_true",
                     help="deterministic scoring only; coherence is excluded, not guessed")
+    ap.add_argument("--fresh", action="store_true",
+                    help="ignore the checkpoint and re-run every question/provider pair")
     args = ap.parse_args()
 
     settings = get_settings()
@@ -70,9 +72,27 @@ def main() -> int:
     print(f"{len(questions)} questions x {len(providers)} providers = "
           f"{len(questions) * len(providers)} runs\n")
 
+    # Checkpoint every completed run. A 120-run matrix is ~2h of live provider calls, and
+    # holding the rows only in memory means any interruption -- a reaped process, a laptop
+    # sleeping, ^C -- costs the whole run. Lost 76/120 that way once. Each row is appended
+    # as it lands, and a restart skips what is already on disk, so an interruption costs one
+    # run rather than all of them.
+    checkpoint = ROOT / "results" / f"provider_matrix_rows_{args.questions}q.jsonl"
     rows: list[dict] = []
+    if checkpoint.exists() and not args.fresh:
+        rows = [json.loads(l) for l in checkpoint.read_text().splitlines() if l.strip()]
+        print(f"resuming from {checkpoint.name}: {len(rows)} run(s) already done")
+    done = {(r["question_id"], r["provider"]) for r in rows}
+
+    def record(row: dict) -> None:
+        rows.append(row)
+        with checkpoint.open("a") as fh:
+            fh.write(json.dumps(row) + "\n")
+
     for question in questions:
         for provider in providers:
+            if (question["id"], provider) in done:
+                continue
             runner = build_runner(tavily_key=settings.tavily_api_key, parallel_key=settings.parallel_api_key)
             started = time.perf_counter()
             try:
@@ -83,7 +103,7 @@ def main() -> int:
                     save_dir=ROOT / "results" / "runs",
                 )
                 elapsed = time.perf_counter() - started
-                rows.append({
+                record({
                     "question_id": question["id"],
                     "category": question.get("category"),
                     "provider": provider,
@@ -101,7 +121,7 @@ def main() -> int:
                       f"composite {result.scores['composite']:.2f} "
                       f"{'PASS' if result.gate_passed else 'FAIL'}")
             except Exception as exc:
-                rows.append({
+                record({
                     "question_id": question["id"], "provider": provider, "succeeded": False,
                     "error": f"{type(exc).__name__}: {exc}", "composite": None, "passed": False,
                 })

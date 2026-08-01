@@ -15,3 +15,6 @@ results/runs/
 
 # generated knowledge graph (regenerate with /understand)
 .ua/
+
+# run_eval checkpoint — transient, superseded by provider_matrix.json
+results/provider_matrix_rows_*.jsonl
