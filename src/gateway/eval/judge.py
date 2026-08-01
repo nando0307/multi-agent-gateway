@@ -96,11 +96,19 @@ class Judge:
     # InternalServerError (observed as a 529 "temporarily overloaded") are all normal
     # traffic for a free model, not an outage -- seen all three across different judge
     # models while chasing this.
+    #
+    # litellm.exceptions.APIError is listed separately and is NOT redundant with the
+    # three above: it is a *sibling*, not a parent. litellm's InternalServerError
+    # inherits from **openai's** APIError, while litellm.exceptions.APIError descends
+    # from OpenAIError -- so issubclass(InternalServerError, litellm.APIError) is False.
+    # NVIDIA NIM raises the bare APIError for "Service temporarily overloaded", which
+    # therefore sailed past this ladder unretried and failed ~1 judge call in 3.
     @retry(
         retry=retry_if_exception_type((
             litellm.exceptions.RateLimitError,
             litellm.exceptions.Timeout,
             litellm.exceptions.InternalServerError,
+            litellm.exceptions.APIError,
         )),
         wait=wait_random_exponential(multiplier=1, max=20),
         stop=stop_after_attempt(5),
