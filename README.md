@@ -101,12 +101,16 @@ bash scripts/run_garak.sh                  # model-level probes against the runn
   two.
 - **garak probes the model, not the tool layer.** Its results and the scope-gate results are
   reported separately rather than blended into one flattering figure.
-- **The judge has been checked against a model, not a human.** Claude Opus 5 scored 17
-  reports independently: depth ρ=0.903, coherence ρ=0.879. That rules out the judge being
+- **The judge has been checked against a model, not a human.** Claude Opus 5 scored 18
+  reports independently: depth ρ=0.80, coherence ρ=0.72. That rules out the judge being
   idiosyncratic, but two models can share a blind spot, so it is not human validation —
   `results/judge_agreement.md` says so explicitly and the human gate stays open. The judge
-  also runs +0.65 high on coherence, which cancels for provider comparison but inflates the
+  also runs +0.67 high on coherence, which cancels for provider comparison but inflates the
   absolute gate threshold. Citation sub-scores do not depend on the judge at all.
+- **The judge does not reproduce its own scores.** Re-scoring the same reports at
+  temperature 0 changed 6 of 34 scores, moving depth ρ by −0.06 and coherence ρ by −0.08
+  without a single input changing. Agreement figures are quoted to two decimals here
+  because the third is noise, and any single run should be read as ±0.08 rather than exact.
 - **`provider_matrix.md`'s composite scores were measured against the retired judge.** Judge
   agreement was re-validated against `deepseek-v4-flash` on 2026-07-31, but the Phase 7
   matrix was not re-run, so its absolute composites still carry the old judge's calibration.

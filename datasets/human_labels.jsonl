@@ -4,7 +4,7 @@
 {"label_id": "L04", "question_id": "q04", "model_depth": 4, "model_coherence": 3}
 {"label_id": "L05", "question_id": "q05", "model_depth": 3, "model_coherence": 3}
 {"label_id": "L06", "question_id": "q06", "model_depth": 1, "model_coherence": 4}
-{"label_id": "L07", "question_id": "q07", "model_depth": null, "model_coherence": null}
+{"label_id": "L07", "question_id": "q07", "model_depth": 3, "model_coherence": 4}
 {"label_id": "L08", "question_id": "q08", "model_depth": 3, "model_coherence": 2}
 {"label_id": "L09", "question_id": "q09", "model_depth": 3, "model_coherence": 3}
 {"label_id": "L10", "question_id": "q10", "model_depth": 4, "model_coherence": 4}

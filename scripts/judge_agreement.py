@@ -30,6 +30,7 @@ import argparse
 import json
 import statistics
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -226,9 +227,16 @@ def cmd_score(args) -> int:
         return 2
 
     rows = []
-    for item in filled:
+    for i, item in enumerate(filled):
         report = reports[item["label_id"]]
-        print(f"judging {item['label_id']}...", flush=True)
+        # Pace the loop. Scoring n reports is 2n judge calls back to back, and the judge
+        # sits on a free tier that rate-limits sustained bursts -- 36 calls with no gap
+        # returned a 429 that outlasted Judge._ask's whole retry ladder, so the run died
+        # after having already spent most of its calls. The ladder is for a blip; this is
+        # for continuous pressure. --pace 0 disables it when the judge is a paid tier.
+        if i and args.pace:
+            time.sleep(args.pace)
+        print(f"judging {item['label_id']}... ({i + 1}/{len(filled)})", flush=True)
         rows.append({
             **item,
             "ref_depth": float(pick(item, "depth")),
@@ -339,6 +347,8 @@ def main() -> int:
     s.add_argument("--rater", default=None, help="who or what produced the labels")
     s.add_argument("--rater-type", choices=["human", "model"], default=None,
                    help="overrides the type inferred from the key naming")
+    s.add_argument("--pace", type=float, default=3.0,
+                   help="seconds to wait between reports; 0 to disable (paid judge tier)")
     s.set_defaults(func=cmd_score)
     args = ap.parse_args()
     return args.func(args)

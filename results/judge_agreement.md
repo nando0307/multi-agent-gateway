@@ -1,6 +1,6 @@
 # Phase 6 - Judge agreement with an independent rater
 
-`n = 17` reports. Judge under test: `nvidia_nim/deepseek-ai/deepseek-v4-flash`, temperature 0. Reference rater: **claude-opus-5** (model).
+`n = 18` reports. Judge under test: `nvidia_nim/deepseek-ai/deepseek-v4-flash`, temperature 0. Reference rater: **claude-opus-5** (model).
 
 The reference rater scored the reports without seeing the judge's scores. Had they been visible, this would measure compliance rather than agreement.
 
@@ -10,8 +10,8 @@ What it does establish: the judge is not idiosyncratic relative to a stronger mo
 
 | dimension | Spearman rho | within +/-1 | mean human | mean judge | judge bias |
 |---|---|---|---|---|---|
-| depth | **0.903** | 100.0% | 2.53 | 2.88 | +0.35 |
-| coherence | **0.879** | 88.2% | 2.71 | 3.35 | +0.65 |
+| depth | **0.801** | 94.4% | 2.56 | 2.94 | +0.39 |
+| coherence | **0.723** | 77.8% | 2.78 | 3.44 | +0.67 |
 
 ## Verdict: PASS (against a model rater -- human gate still open)
 
@@ -24,18 +24,19 @@ The threshold is Spearman rho >= 0.6 on both dimensions. Both clear it, so the p
 | id | question | provider | model depth | judge depth | model coh | judge coh |
 |---|---|---|---|---|---|---|
 | L01 | q01 | openrouter | 3 | 4 | 3 | 3 |
-| L02 | q02 | gemini | 2 | 3 | 4 | 4 |
+| L02 | q02 | gemini | 2 | 4 | 4 | 4 |
 | L03 | q03 | ollama | 1 | 2 | 2 | 2 |
-| L04 | q04 | nim | 4 | 4 | 3 | 4 |
-| L05 | q05 | openrouter | 3 | 4 | 3 | 4 |
-| L06 | q06 | gemini | 1 | 1 | 4 | 5 |
+| L04 | q04 | nim | 4 | 4 | 3 | 5 |
+| L05 | q05 | openrouter | 3 | 4 | 3 | 5 |
+| L06 | q06 | gemini | 1 | 1 | 4 | 4 |
+| L07 | q07 | ollama | 3 | 2 | 4 | 3 |
 | L08 | q08 | nim | 3 | 4 | 2 | 4 |
-| L09 | q09 | openrouter | 3 | 3 | 3 | 3 |
+| L09 | q09 | openrouter | 3 | 3 | 3 | 4 |
 | L10 | q10 | gemini | 4 | 4 | 4 | 5 |
 | L11 | q11 | ollama | 1 | 2 | 1 | 1 |
 | L12 | q12 | nim | 2 | 2 | 2 | 2 |
 | L13 | q13 | openrouter | 3 | 4 | 3 | 5 |
-| L14 | q15 | ollama | 1 | 1 | 1 | 1 |
+| L14 | q15 | ollama | 1 | 2 | 1 | 1 |
 | L15 | q16 | nim | 4 | 4 | 4 | 5 |
 | L16 | q17 | openrouter | 2 | 2 | 2 | 3 |
 | L17 | q19 | ollama | 1 | 1 | 1 | 1 |

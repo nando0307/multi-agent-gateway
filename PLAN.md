@@ -539,19 +539,25 @@ validation".
   First result in: Gemini p50 9.3s / p95 23.1s / 1 failure in 20 — a poor primary, and it
   currently sits first in the chain. The benchmark demoting it is the point of this phase.
 * **Phase 6 — run against a *model* rater, not a human.** Claude Opus 5 scored the reports:
-  against the current `deepseek-v4-flash` judge, depth ρ=0.903, coherence ρ=0.879 on n=17,
+  against the current `deepseek-v4-flash` judge, depth ρ=0.80, coherence ρ=0.72 on n=18,
   both clear of the 0.6 threshold. That shows the judge is not idiosyncratic relative to a
   stronger model. It is **not** human validation — two models can share a blind spot — so
   `results/judge_agreement.md` labels itself inter-model agreement and the human gate stays
   open. To close it, re-score the same sheet by hand using `human_depth`/`human_coherence`
   keys and re-run.
-* **n is 17.** 18 reports exist in `label_reports.json`, but L07's reference labels were
-  nulled when its empty ollama report was regenerated (`ba25cc2`) and never re-scored, so
-  `score` drops it. The 2026-07-27 run reported n=18 because it predated that regeneration —
-  it counted an L07 row whose labels no longer described the report text. Re-label L07 to
-  get it back.
-* **Judge inflates coherence by +0.65** against the reference rater (depth is near-neutral
-  at +0.35). Provider *comparison* is unaffected — a constant offset cancels — but the
+* **The judge does not reproduce its own scores — this acceptance criterion is NOT met.**
+  Phase 6 requires "scores reproduce across two runs". Re-scoring byte-identical reports at
+  temperature 0 changed **6 of 34 scores** (L02, L04, L05, L06, L09, L14), moving depth ρ
+  0.903 → 0.844 and coherence ρ 0.879 → 0.799 with no input change at all. Roughly half of
+  the drop to the current 0.80/0.72 is this drift; the other half is L07 rejoining. Treat any
+  single run as ±0.08, and stop quoting three decimals. The criterion had never actually been
+  tested before — the 2026-07-27 run was the only one on record.
+* **n is 18 again.** L07's labels were nulled when its ollama report was regenerated
+  (`ba25cc2`), which dropped it from the 2026-07-31 run. Re-labelled 2026-08-02 by the same
+  claude-opus-5 reference rater (depth 3, coherence 4) against the current report text. It is
+  a genuine disagreement, not an outlier: the judge scored it 2|3, within ±1 on both.
+* **Judge inflates coherence by +0.67** against the reference rater (depth is near-neutral
+  at +0.39). Provider *comparison* is unaffected — a constant offset cancels — but the
   absolute 0.70 gate threshold sits against an inflated coherence term and should be
   recalibrated before it is treated as meaningful.
 * **Phase 7** — `run_eval.py` ready; run after the judge clears the gate.
@@ -604,3 +610,4 @@ validation".
 | 2026-07-30 | 1 | Attempted `bench_latency.py --only groq` to close the gap left by the Ollama→Groq swap (Groq's chain position was never independently measured — it inherited Ollama's old slot for practical reasons, not on data) | **failed, not written** | 19/20 calls hit Groq's own **daily token cap** (100,000 TPD, at 99,977/100,000 from the day's cumulative testing — garak run included) before a single clean sample. Discarded rather than reported (p50=p95=1530ms off one lucky call is not a measurement). `latency.json`/`latency.md` cleaned of both the bad Groq row and the now-irrelevant Ollama row; `latency.md` now explicitly flags Groq's chain position as unverified rather than implying it like the old Ollama-era text did. Re-run once the daily quota resets, with no concurrent load on the same key |
 | 2026-07-30 | 8 | garak run against the gateway (judge fix finally durable — no crashes). `dan.DanInTheWild` ran to completion (256/256 processed) over ~10h wall clock (uneven pacing, some attempts slow). The "256" per-probe count was itself a surprise — each of the 3 configured probes runs its own ~256 attempts, not 256 combined as originally assumed, making a full 3-probe scan a much bigger commitment (~6-10h+) than scoped. Stopped intentionally after `dan.DanInTheWild` rather than let `encoding.InjectBase64`/`promptinject.HijackHateHumans` run unbounded; the stop watcher itself got delayed (background-task lifetime limit), so it fired ~54% into `encoding.InjectBase64` instead of exactly at the boundary — that probe's partial data (138/256, no final score) is discarded, not reported | **dan.DanInTheWild: 22/34 scored bypassed mitigation (64.7%, 95% CI 47-79%)** | Written to `results/security_report.md` as a new "Model-level susceptibility (garak) -- partial" section. 222/256 prompts were unscored — mostly `/research`'s 1000-char length cap rejecting long jailbreak templates before they reached a model (real hardening, not a measurement gap, though garak can't tell the two apart in its own count). No raw-provider baseline run yet (`run_garak.sh`'s second half is still a manual reminder, never automated) — this is a susceptibility number, not yet a before/after hardening delta. `encoding.InjectBase64`, `promptinject.HijackHateHumans`, and the baseline comparison remain open follow-up work |
 | 2026-07-31 | 6 | Re-validated judge agreement against the current `nvidia_nim/deepseek-ai/deepseek-v4-flash` judge (`judge_agreement.py score`, re-judging the same 18 stored reports against the unchanged Claude Opus 5 reference labels) | depth **ρ=0.903** (bias +0.35, 100% within ±1), coherence **ρ=0.879** (bias +0.65, 88.2% within ±1), **n=17** | PASS — clears the 0.6 threshold on both dimensions, so the judge swap did not cost agreement; coherence inflation dropped from +1.06 to +0.65. n fell 18→17 because L07's reference labels were nulled when its empty ollama report was regenerated at `ba25cc2` and never re-scored — the old n=18 report predated that and counted a row whose labels no longer matched the report text, so this is the first self-consistent run. `JUDGE_API_KEY` was empty and now carries the NVIDIA NIM key (same provider as the judge model, different model, so D5 independence holds). **Still outstanding:** `provider_matrix.md`'s composite scores were measured against the retired gpt-oss-120b judge and were not re-run |
+| 2026-08-02 | 6 | Re-labelled L07 (claude-opus-5, depth 3 / coherence 4) to restore n=18, and re-ran `judge_agreement.py score` | depth **ρ=0.801** (bias +0.39, 94.4% within ±1), coherence **ρ=0.723** (bias +0.67, 77.8% within ±1), **n=18** | PASS on the 0.6 threshold, but the run exposed a bigger problem than the missing row: **the judge does not reproduce itself.** Re-scoring the same 17 reports at temperature 0 changed 6 of 34 scores, moving depth ρ 0.903→0.844 and coherence ρ 0.879→0.799 before L07 was added at all — so about half the headline drop is judge drift, not the new row. Phase 6's "scores reproduce across two runs" acceptance criterion is therefore **not met**, and had never been tested until now. Also added `--pace` (default 3s) to `cmd_score`: 2n back-to-back judge calls hit a 429 that outlasted the retry ladder and killed a run mid-way |
