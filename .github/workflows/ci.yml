@@ -57,7 +57,14 @@ jobs:
         run: uv run bandit -r src/ -ll
 
       - name: pip-audit
-        run: uv run pip-audit --progress-spinner off || true
+        # No `|| true`. It was here because a newly-disclosed CVE in a transitive dep
+        # breaks an unrelated PR, which is annoying -- but a supply-chain check that
+        # cannot fail is not a check, and results/pip_audit.txt was being presented as
+        # evidence of a gate that did not exist. Clean as of 2026-08-01.
+        # To accept a specific finding, ignore it explicitly and say why:
+        #   uv run pip-audit --progress-spinner off --ignore-vuln GHSA-xxxx-xxxx-xxxx
+        # so the exception is one reviewable line rather than a blanket bypass.
+        run: uv run pip-audit --progress-spinner off
 
       - name: Secret scan of tracked files
         # Some paths legitimately contain key-shaped strings and are excluded by path

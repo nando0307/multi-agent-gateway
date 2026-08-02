@@ -12,7 +12,11 @@ bandit_status=${PIPESTATUS[0]}
 
 echo
 echo "== pip-audit =="
-.venv/bin/pip-audit --progress-spinner off 2>&1 | tee results/pip_audit.txt || true
+.venv/bin/pip-audit --progress-spinner off 2>&1 | tee results/pip_audit.txt
+# Captured the same way as bandit's, rather than discarded with `|| true`. There is no
+# `set -e` here, so the old `|| true` bought nothing except throwing the status away --
+# which made results/pip_audit.txt evidence of a scan that could never fail.
+audit_status=${PIPESTATUS[0]}
 
 echo
 echo "== secret scan of tracked files =="
@@ -33,4 +37,6 @@ else
   echo "clean: no key-shaped strings in tracked files"
 fi
 
-exit $bandit_status
+# Both scans run to completion before either can fail the script -- a bandit finding must
+# not hide a pip-audit finding. bandit's status wins when both are non-zero.
+exit $(( bandit_status != 0 ? bandit_status : audit_status ))
