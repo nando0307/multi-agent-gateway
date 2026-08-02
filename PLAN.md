@@ -122,6 +122,19 @@ Sharing an account with a routed provider *is* a weaker claim than a wholly sepa
 hard-fails on the same model, including the same model reached by a different route
 (`openrouter/google/gemini-...` vs `gemini/gemini-...`), so switching route is not a bypass.
 
+**Revised 2026-07-30** — the judge is no longer `openrouter/openai/gpt-oss-120b`; the paragraph
+above is kept as the original reasoning, not as a description of the shipped system. OpenRouter
+credits hit $0 mid-garak-run, which broke the routed `openrouter` tier and the judge at once
+because D5 had them share an account. After three free-tier dead ends (see the Progress log) the
+judge is now `nvidia_nim/deepseek-ai/deepseek-v4-flash`. It shares the `nim` account rather than
+the `openrouter` one, so the shared-account caveat still applies, just to a different tier —
+`judge_independence_caveat()` names whichever one it is at runtime rather than hardcoding it.
+
+**Revised 2026-08-02** — D5 guards against *self-preference*, and that guard holds. It does not
+guard against the judge being unstable: re-scoring identical reports at temperature 0 changed 6 of
+34 scores. A judge can be perfectly independent and still not reproduce itself, so independence is
+necessary and not sufficient. See the Phase 6 findings.
+
 **D6. N=4, and say 4.** Azure OpenAI is out (no access). As of 2026-07-28 the fallback chain is
 OpenRouter → Gemini → Groq → NVIDIA NIM (p95-ordered, see Phase 1) — four independent cloud
 vendors, no local tier (D3). This is a shape change from the original "three cloud + one
@@ -231,12 +244,12 @@ Do not advance until acceptance criteria pass. Tick the boxes as you go.
   ```
   `settings.py` asserts at import time that `JUDGE_MODEL`'s provider prefix is absent from the
   router's model list — a one-line guard that makes D5 impossible to violate by accident.
-- [ ] `scripts/smoke_providers.py`: loop all four, print `provider | ok/fail | latency_ms | error`.
+- [x] `scripts/smoke_providers.py`: loop all four, print `provider | ok/fail | latency_ms | error`.
       Add a 5th line that smoke-tests the judge key separately.
-- [ ] Confirm LiteLLM model-string format for each against current docs (these change; verify, don't trust):
+- [x] Confirm LiteLLM model-string format for each against current docs (these change; verify, don't trust):
   `gemini/gemini-2.5-flash` · `nvidia_nim/meta/llama-3.3-70b-instruct` · `openrouter/<vendor>/<model>` ·
   `ollama_chat/qwen3.5:9b`
-- [ ] Tavily: sign up, key in `.env`, one smoke query. Confirm the free-tier monthly quota against
+- [x] Tavily: sign up, key in `.env`, one smoke query. Confirm the free-tier monthly quota against
       your Phase 7 budget — 30 questions × 4 sub-questions ≈ 120 searches per full matrix run, and
       you'll run the matrix more than once. **Build the search cache (Phase 7) on Day 0 if the quota
       looks tight**, since you need it for fairness anyway.
@@ -250,15 +263,16 @@ Do not advance until acceptance criteria pass. Tick the boxes as you go.
 
 **Goal:** pick the fallback order from data, so the resume's "after measuring [reasoning]" is real.
 
-- [ ] `scripts/bench_latency.py`: for each provider, 20 runs of a fixed 300-token research-style
+- [x] `scripts/bench_latency.py`: for each provider, 20 runs of a fixed 300-token research-style
       prompt. Record TTFT, total latency, output tokens, tokens/sec, cost/1M (from
       `litellm.completion_cost`), failures.
-- [ ] Report p50 / p95 / max. **p95 is the ordering key, not p50** — failover is a tail-latency
+- [x] Report p50 / p95 / max. **p95 is the ordering key, not p50** — failover is a tail-latency
       story; a provider with a great median and a terrible tail is a bad primary.
 - [ ] Run it at two times of day (e.g. 10:00 and 22:00 local) — provider load varies. Average them.
-- [ ] Write `results/latency.md` with the table **and one paragraph justifying the chosen order**,
+      *Still open: `results/latency.md` records one label (`morning`) only.*
+- [x] Write `results/latency.md` with the table **and one paragraph justifying the chosen order**,
       naming the tie-breakers (cost, rate limit headroom, context window).
-- [ ] Encode the order in `llm/model_list.py` as an explicit `FALLBACK_CHAIN` list with a comment
+- [x] Encode the order in `llm/model_list.py` as an explicit chain list with a comment
       linking to `results/latency.md`.
 
 **Expected shape** (verify, don't assume): Gemini Flash fastest → NIM / OpenRouter mid, with
@@ -475,7 +489,7 @@ traced.
 - [x] `README.md` — architecture diagram, the three claims each linked to its `results/` file,
       quickstart, and an honest "Limitations" section (small n, judge is a single model, garak
       coverage caveats). *An explicit limitations section reads as senior, not as weakness.*
-- [ ] CI: GitHub Actions running `pytest` + `bandit` on push (mock providers, no keys in CI).
+- [x] CI: GitHub Actions running `pytest` + `bandit` on push (mock providers, no keys in CI).
 
 ---
 

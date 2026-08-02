@@ -283,6 +283,20 @@ def cmd_score(args) -> int:
             "so the provider matrix is not being ordered by one small model's private tastes.",
             "",
         ]
+    # Emitted from here rather than written into the .md by hand, because this file is fully
+    # regenerated on every `score` run -- a hand-added caveat would be silently erased by the
+    # next one, which is exactly how the stale gpt-oss-120b numbers survived as long as they
+    # did. The figures below are a fixed record of the 2026-08-02 re-run, not recomputed:
+    # measuring drift needs two runs and this command only has one.
+    lines += [
+        "> **These scores do not reproduce exactly.** Re-scoring byte-identical reports at "
+        "temperature 0 on 2026-08-02 changed **6 of 34** judge scores, moving depth rho "
+        "0.903 -> 0.844 and coherence rho 0.879 -> 0.799 with no input change at all. Read any "
+        "single run as +/-0.08 rather than exact, and treat the third decimal as noise. Phase "
+        "6's *\"scores reproduce across two runs\"* acceptance criterion is therefore **not "
+        "met**. Re-run this command twice before quoting a figure that matters.",
+        "",
+    ]
     lines += [
         "| dimension | Spearman rho | within +/-1 | mean human | mean judge | judge bias |",
         "|---|---|---|---|---|---|",
