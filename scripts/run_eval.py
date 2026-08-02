@@ -78,16 +78,47 @@ def main() -> int:
     # as it lands, and a restart skips what is already on disk, so an interruption costs one
     # run rather than all of them.
     checkpoint = ROOT / "results" / f"provider_matrix_rows_{args.questions}q.jsonl"
+
+    # Keep the report text, not just the score. Without it a matrix cannot be re-judged:
+    # the raw rows carry composite/depth/coherence but nothing to re-score, and the run
+    # traces carry token counts and fallback depth but no content. That is why swapping the
+    # judge stranded provider_matrix.md against a retired model with no way back except
+    # re-running all 120 research calls. With the text committed, a judge change costs a
+    # re-judge of stored reports instead of a full re-run -- the same thing
+    # results/label_reports.json already does for the Phase 6 agreement study, which is why
+    # that study could be re-scored against a new judge in minutes.
+    #
+    # It also makes the judge's run-to-run noise measurable: re-judge the same reports twice
+    # and see how far the silent-regression count moves. Right now that is unanswerable.
+    reports_path = ROOT / "results" / f"provider_matrix_reports_{args.questions}q.jsonl"
+
     rows: list[dict] = []
     if checkpoint.exists() and not args.fresh:
         rows = [json.loads(l) for l in checkpoint.read_text().splitlines() if l.strip()]
         print(f"resuming from {checkpoint.name}: {len(rows)} run(s) already done")
+    elif args.fresh:
+        # Both files are append-only, so a fresh run must clear them or it interleaves the
+        # new run's rows with the previous one's.
+        checkpoint.unlink(missing_ok=True)
+        reports_path.unlink(missing_ok=True)
     done = {(r["question_id"], r["provider"]) for r in rows}
 
     def record(row: dict) -> None:
         rows.append(row)
         with checkpoint.open("a") as fh:
             fh.write(json.dumps(row) + "\n")
+
+    def record_report(question: dict, provider: str, result, trace) -> None:
+        with reports_path.open("a") as fh:
+            fh.write(json.dumps({
+                "question_id": question["id"],
+                "question": question["question"],
+                "provider": provider,
+                "report": result.report,
+                "sources": [{"source_id": e.source_id, "title": e.title, "url": e.url}
+                            for e in result.evidence],
+                "trace": trace.run_id,
+            }) + "\n")
 
     for question in questions:
         for provider in providers:
@@ -103,6 +134,11 @@ def main() -> int:
                     save_dir=ROOT / "results" / "runs",
                 )
                 elapsed = time.perf_counter() - started
+                # Written before the row, so a crash between the two leaves an unreferenced
+                # report rather than a row whose text was never saved. The row is what
+                # `done` is rebuilt from, so that ordering makes the pair self-healing: the
+                # pair re-runs and the orphan is superseded.
+                record_report(question, provider, result, trace)
                 record({
                     "question_id": question["id"],
                     "category": question.get("category"),
