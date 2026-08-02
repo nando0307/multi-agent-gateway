@@ -177,11 +177,17 @@ def main() -> int:
     for row in rows:
         by_question.setdefault(row["question_id"], {})[row["provider"]] = row
 
+    # Track how many questions the comparison could actually run on. A regression is defined
+    # relative to the primary, so a question where the primary errored or failed the gate
+    # yields no verdict either way. Without this count, "0 regressions" is ambiguous between
+    # "looked and found none" and "never looked" -- and the second reads as a clean result.
     regressions = []
+    comparable = 0
     for qid, per_provider in by_question.items():
         base = per_provider.get(primary)
         if not base or not base["succeeded"] or not base["passed"]:
             continue
+        comparable += 1
         for provider, row in per_provider.items():
             if provider == primary or not row["succeeded"]:
                 continue
@@ -242,11 +248,24 @@ def main() -> int:
             f"{s['mean_citation']} | {s['mean_depth']} | {s['mean_coherence']} | {s['pass_rate']}% |"
         )
 
+    dead = [p for p in providers if summary[p]["succeeded"] == 0]
+    if dead:
+        lines += [
+            "",
+            "> **Incomplete matrix.** " + ", ".join(f"`{p}`" for p in dead) + " produced no "
+            "successful run, so its row is empty rather than poor. Treat this table as covering "
+            f"{len(providers) - len(dead)} of {len(providers)} providers.",
+        ]
+
     lines += [
         "",
         "## Silent quality regressions",
         "",
-        f"**{len(regressions)}** caught.",
+        (f"**{len(regressions)}** caught across {comparable} comparable question(s)."
+         if comparable else
+         f"**Not measurable.** The primary (`{primary}`) passed the gate on 0 questions, so "
+         "there was no baseline to compare any fallback against. This is *not* a finding of "
+         "zero regressions -- the comparison never ran. Re-run once the primary is healthy."),
         "",
         "> A run where the request **succeeded** -- no error, no exception, within the latency "
         "> SLO, green on every ops dashboard -- but whose composite score fell below the "
@@ -280,7 +299,12 @@ def main() -> int:
         "",
     ]
     (results / "provider_matrix.md").write_text("\n".join(lines))
-    print(f"\nsilent quality regressions: {len(regressions)}")
+    if comparable:
+        print(f"\nsilent quality regressions: {len(regressions)} "
+              f"(across {comparable} comparable question(s))")
+    else:
+        print(f"\nsilent quality regressions: NOT MEASURABLE -- primary '{primary}' passed "
+              "0 questions, so nothing could be compared against it")
     print(f"wrote {results / 'provider_matrix.md'}")
     return 0
 
