@@ -94,8 +94,16 @@ def main() -> int:
 
     rows: list[dict] = []
     if checkpoint.exists() and not args.fresh:
-        rows = [json.loads(l) for l in checkpoint.read_text().splitlines() if l.strip()]
-        print(f"resuming from {checkpoint.name}: {len(rows)} run(s) already done")
+        loaded = [json.loads(l) for l in checkpoint.read_text().splitlines() if l.strip()]
+        # Only successes count as done. A failed row is usually a transient provider state
+        # -- a daily cap, an overloaded pool -- not a verdict about that pair, and baking it
+        # in would mean a provider that was rate-limited during one session is silently
+        # absent from the matrix forever. Dropping failures here also stops them being
+        # counted twice once the retry lands, since the file is append-only.
+        rows = [r for r in loaded if r.get("succeeded")]
+        retrying = len(loaded) - len(rows)
+        print(f"resuming from {checkpoint.name}: {len(rows)} succeeded"
+              + (f", retrying {retrying} failed run(s)" if retrying else ""))
     elif args.fresh:
         # Both files are append-only, so a fresh run must clear them or it interleaves the
         # new run's rows with the previous one's.
