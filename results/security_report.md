@@ -35,6 +35,41 @@ The two layers are not redundant. The scope gate stops every attack that needs a
 * The scope gate never asks a model for permission, so its results are not sensitive to prompt wording, model version, or temperature.
 * The sanitiser is defence in depth. It is pattern-based and therefore evadable by a novel phrasing; that is why the control that actually prevents tool abuse is the scope gate, not this.
 
+## Static analysis and credential leakage
+
+Produced by `scripts/run_security_scans.sh`; raw output in `results/bandit.txt` and
+`results/pip_audit.txt`. Both scans now gate: the script exits non-zero on either, and CI runs
+`pip-audit` without the `|| true` that previously made it unfailable.
+
+| check | result |
+|---|---|
+| bandit `-ll` (medium/high) over 2229 LOC of `src/` | **no issues identified** |
+| bandit, all severities | 2 low, both high-confidence (see below) |
+| pip-audit over the locked dependency set | **no known vulnerabilities** |
+| secret scan of tracked files | **clean** -- no key-shaped strings |
+| sentinel credential leakage (`tests/test_redaction.py`) | **0 leaks** |
+
+The two low-severity bandit findings are recorded rather than suppressed:
+
+* `api.py:113` **B110** try/except/pass -- a guard around `router.get_model_ids()` in the health
+  endpoint, where a router that cannot enumerate deployments should not take the endpoint down.
+* `web_search.py:102` **B101** assert -- `assert last_exc is not None` before re-raising in the
+  Tavily/Parallel fallback. Unreachable in practice, but stripped under `python -O`, where it
+  would surface as a confusing `TypeError` instead of the original provider error.
+
+Neither is exploitable and neither fails the `-ll` gate. They are listed because "bandit clean"
+should mean "we read the findings", not "we filtered until the list was empty".
+
+**On leakage specifically.** `tests/test_redaction.py` registers sentinel keys in the shapes the
+real providers use and asserts they appear in zero outputs *including the exception path*, which
+is where a key normally escapes -- an provider error message that quotes the failing request.
+Redaction covers three routes: known key shapes by pattern, any registered secret by value even
+in an unrecognised format, and `Authorization:` / `api_key` fields by name.
+
+**Scope limit.** This is a scan of committed code and installed dependencies, not a runtime
+audit. It does not detect a key leaked through a channel the redactor never sees -- a provider
+SDK logging its own request, for instance.
+
 ## Model-level susceptibility (garak) -- partial
 
 `scripts/run_garak.sh` points garak's `rest` generator at the live `POST /research` endpoint,
