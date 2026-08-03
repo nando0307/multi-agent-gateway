@@ -111,10 +111,15 @@ bash scripts/run_garak.sh                  # model-level probes against the runn
   temperature 0 changed 6 of 34 scores, moving depth ρ by −0.06 and coherence ρ by −0.08
   without a single input changing. Agreement figures are quoted to two decimals here
   because the third is noise, and any single run should be read as ±0.08 rather than exact.
-- **`provider_matrix.md`'s composite scores were measured against the retired judge.** Judge
-  agreement was re-validated against `deepseek-v4-flash` on 2026-07-31, but the Phase 7
-  matrix was not re-run, so its absolute composites still carry the old judge's calibration.
-  The provider *ordering* is unaffected by a constant offset; the absolute numbers are stale.
+- **Half the matrix cannot produce a regression verdict.** A silent regression is defined
+  relative to the primary, so a question the primary failed yields no verdict either way.
+  OpenRouter passed 15 of 30, so the 11 regressions are counted across 15 comparable
+  questions, not 30. The report says so rather than printing a bare count.
+- **The primary is not the strongest provider.** The chain is p95-latency-ordered, which puts
+  OpenRouter (mean composite 0.688, 50% pass) ahead of Gemini (0.758, 73.3%). That is the
+  documented cost of optimising for tail latency, not an oversight — but it does mean the
+  best provider only serves when the fastest one fails. The 0.02 gap to NVIDIA NIM is inside
+  the judge's ±0.08 noise band; the 0.07 gap to Gemini is probably not.
 - **N = 4, not 5.** Azure OpenAI was planned and dropped for lack of access. Four providers
   — OpenRouter, Gemini, Groq and NVIDIA NIM, four independent cloud vendors — is the honest
   count. It was three cloud vendors plus a local Ollama tier until 2026-07-28; see the next
