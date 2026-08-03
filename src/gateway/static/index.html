@@ -1,0 +1,237 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>multi-agent-gateway</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #161a21; --line: #262c36; --fg: #e6e9ef;
+    --dim: #8b93a1; --accent: #6ea8fe; --ok: #4ade80; --bad: #f87171; --warn: #fbbf24;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f7f8fa; --panel: #fff; --line: #e2e5ea; --fg: #14171c;
+      --dim: #5c6472; --accent: #2563eb; --ok: #15803d; --bad: #b91c1c; --warn: #a16207;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 2rem 1rem 4rem;
+  }
+  main { max-width: 780px; margin: 0 auto; }
+  h1 { font-size: 1.25rem; margin: 0 0 .25rem; }
+  .sub { color: var(--dim); font-size: .875rem; margin: 0 0 1.5rem; }
+  form { display: flex; gap: .5rem; margin-bottom: 1rem; }
+  input[type=text] {
+    flex: 1; padding: .7rem .9rem; border-radius: 8px; font: inherit;
+    background: var(--panel); color: var(--fg); border: 1px solid var(--line);
+  }
+  input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    padding: .7rem 1.1rem; border-radius: 8px; border: 0; font: inherit; font-weight: 600;
+    background: var(--accent); color: #fff; cursor: pointer;
+  }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 1rem 1.15rem; margin-bottom: 1rem;
+  }
+  .muted { color: var(--dim); font-size: .875rem; }
+  .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+  .pill {
+    font-size: .78rem; padding: .18rem .55rem; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--dim); white-space: nowrap;
+  }
+  .pill.ok { color: var(--ok); border-color: currentColor; }
+  .pill.bad { color: var(--bad); border-color: currentColor; }
+  .pill.warn { color: var(--warn); border-color: currentColor; }
+  table { border-collapse: collapse; width: 100%; font-size: .875rem; }
+  th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 500; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .report { white-space: normal; }
+  .report h2 { font-size: 1rem; margin: 1.2rem 0 .4rem; }
+  .report p { margin: .6rem 0; }
+  .report ul { margin: .6rem 0; padding-left: 1.2rem; }
+  ol.sources { margin: 0; padding-left: 1.3rem; font-size: .875rem; }
+  ol.sources li { margin: .3rem 0; }
+  a { color: var(--accent); }
+  .err { color: var(--bad); }
+  .spin {
+    display: inline-block; width: .8em; height: .8em; border: 2px solid var(--dim);
+    border-top-color: transparent; border-radius: 50%; animation: r .8s linear infinite;
+    vertical-align: -1px; margin-right: .4rem;
+  }
+  @keyframes r { to { transform: rotate(360deg); } }
+</style>
+
+<main>
+  <h1>multi-agent-gateway</h1>
+  <p class="sub">Ask a research question. Every response is routed through the provider
+    fallback chain, scored by the quality gate, and returned with its sources.</p>
+
+  <form id="f">
+    <input id="q" type="text" maxlength="1000" required
+           placeholder="How much grid-scale storage was added in 2024?">
+    <button id="go" type="submit">Research</button>
+  </form>
+
+  <div id="status" class="muted"></div>
+  <div id="out"></div>
+</main>
+
+<script>
+// The report is written by a model from text fetched off the open web, so it is untrusted
+// input as far as this page is concerned. Escape first, then apply the small amount of
+// markdown we render -- never the other way round, or an injected <img onerror> in a fetched
+// page becomes script execution in the browser. The whole project's premise is not trusting
+// that content; the UI does not get an exception.
+const esc = s => s.replace(/[&<>"']/g, c => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function renderReport(md) {
+  const safe = esc(md);
+  return safe.split(/\n{2,}/).map(block => {
+    const b = block.trim();
+    if (!b) return '';
+    if (/^#{1,6}\s/.test(b)) return `<h2>${b.replace(/^#{1,6}\s*/, '')}</h2>`;
+    if (/^([-*]\s)/m.test(b) && b.split('\n').every(l => /^\s*[-*]\s/.test(l))) {
+      return '<ul>' + b.split('\n').map(l =>
+        `<li>${inline(l.replace(/^\s*[-*]\s*/, ''))}</li>`).join('') + '</ul>';
+    }
+    return `<p>${inline(b).replace(/\n/g, '<br>')}</p>`;
+  }).join('');
+}
+// Bold and inline code only. Citation markers [n] are left as plain text on purpose: they
+// refer to the numbered source list below, and turning them into links would imply the
+// citation was verified here. It is verified server-side, against the run's tool-call trace.
+const inline = s => s
+  .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  .replace(/`([^`]+)`/g, '<code>$1</code>');
+
+const scoreRow = (k, v) =>
+  `<tr><th>${esc(k)}</th><td class="num">${v == null ? '—' : Number(v).toFixed(3)}</td></tr>`;
+
+// The citation sub-scores are the part of this system that does not depend on a model at all:
+// every [n] is checked against the run's actual tool-call trace, so a marker the agent cited
+// but never fetched is a hallucination provable by string comparison. Surfacing it is the
+// point -- a demo that shows only a composite score hides the one number nobody has to trust
+// a judge for.
+function citationDetail(c) {
+  if (!c) return '';
+  const halluc = c.hallucinated_markers || [];
+  const ungrounded = c.ungrounded_urls || [];
+  const bits = [
+    `resolvable ${Number(c.resolvable).toFixed(2)}`,
+    `grounded ${Number(c.grounded).toFixed(2)}`,
+    `cited rate ${Number(c.cited_rate).toFixed(2)}`,
+    `supported ${Number(c.supported).toFixed(2)}`,
+  ].map(x => `<span class="pill">${esc(x)}</span>`).join(' ');
+  const flags = [
+    halluc.length
+      ? `<span class="pill bad">${halluc.length} hallucinated marker(s): ${esc(halluc.join(', '))}</span>`
+      : '<span class="pill ok">no hallucinated markers</span>',
+    ungrounded.length
+      ? `<span class="pill bad">${ungrounded.length} ungrounded URL(s)</span>` : '',
+  ].join(' ');
+  return `<div class="muted" style="margin:.7rem 0 .35rem">Citation check
+            <span class="muted">(deterministic — verified against the tool-call trace,
+            no judge involved)</span></div>
+          <div class="row">${bits} ${flags}</div>`;
+}
+
+function render(d) {
+  const s = d.scores || {};
+  const gate = d.gate_passed == null
+    ? '<span class="pill">ungated</span>'
+    : d.gate_passed
+      ? '<span class="pill ok">gate passed</span>'
+      : '<span class="pill bad">gate failed</span>';
+  const chain = (d.served_by || []).map(p => `<span class="pill">${esc(p)}</span>`).join(' ');
+  const depth = d.fallback_depth
+    ? `<span class="pill warn">fallback depth ${d.fallback_depth}</span>`
+    : '<span class="pill ok">primary served</span>';
+
+  return `
+    <div class="card">
+      <div class="row">${gate} ${depth} ${chain}
+        <span class="pill">run ${esc(d.run_id || '')}</span></div>
+    </div>
+    ${d.warning ? `<div class="card err">⚠ ${esc(d.warning)}</div>` : ''}
+    <div class="card report">${renderReport(d.report || '(empty report)')}</div>
+    <div class="card">
+      <table>
+        <tr><th>score</th><th class="num">value</th></tr>
+        ${scoreRow('composite', s.composite)}
+        ${scoreRow('citation', s.citation)}
+        ${scoreRow('depth', s.depth)}
+        ${scoreRow('coherence', s.coherence)}
+      </table>
+      ${citationDetail(s.citation_detail)}
+    </div>
+    <div class="card">
+      <div class="muted" style="margin-bottom:.4rem">Sources</div>
+      ${(d.sources || []).length
+        ? `<ol class="sources">${d.sources.map(x => {
+            const label = esc(x.title || x.url || '');
+            const tail = x.quote_only ? ' <span class="pill">quote only</span>' : '';
+            // Escaping the URL stops attribute breakout but NOT the URL itself:
+            // href="javascript:…" survives escaping intact and runs on click. Allow only
+            // http/https and render anything else as inert text. fetch_url's SSRF check
+            // should mean these are already http(s), but the renderer does not get to
+            // assume that about a field that ultimately came off the open web.
+            const safeHref = /^https?:\/\//i.test(x.url || '');
+            return `<li>${safeHref
+              ? `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${label}</a>`
+              : `${label} <span class="pill bad">blocked scheme</span>`}${tail}</li>`;
+          }).join('')}</ol>`
+        : '<span class="muted">none retrieved</span>'}
+    </div>`;
+}
+
+const $ = id => document.getElementById(id);
+
+$('f').addEventListener('submit', async e => {
+  e.preventDefault();
+  const question = $('q').value.trim();
+  if (!question) return;
+  $('go').disabled = true;
+  $('out').innerHTML = '';
+
+  // A research run is a planner call, k researcher calls with web fetches, a synthesis and
+  // the judge -- tens of seconds, not milliseconds. An unexplained spinner reads as broken,
+  // so show elapsed time and say what it is doing.
+  const t0 = Date.now();
+  const tick = setInterval(() => {
+    $('status').innerHTML =
+      `<span class="spin"></span>researching… ${((Date.now() - t0) / 1000).toFixed(0)}s ` +
+      `<span class="muted">(plan → search → fetch → synthesise → score; usually 40–90s)</span>`;
+  }, 200);
+
+  try {
+    const r = await fetch('/research', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      // Surface the server's own reason rather than a generic failure: 503 means every
+      // provider was exhausted, 504 that the run passed the server-side deadline, 422 that
+      // the question broke the length bound. Those are different problems for the user.
+      const why = body.detail || r.statusText;
+      $('out').innerHTML =
+        `<div class="card err"><strong>${r.status}</strong> — ${esc(String(why))}</div>`;
+    } else {
+      $('out').innerHTML = render(body);
+    }
+  } catch (err) {
+    $('out').innerHTML = `<div class="card err">Request failed: ${esc(String(err))}</div>`;
+  } finally {
+    clearInterval(tick);
+    $('status').textContent = `done in ${((Date.now() - t0) / 1000).toFixed(1)}s`;
+    $('go').disabled = false;
+  }
+});
+</script>

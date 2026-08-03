@@ -9,9 +9,11 @@ bare model.
 from __future__ import annotations
 
 import concurrent.futures
+from pathlib import Path
 from collections import Counter
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from gateway.agents.orchestrator import build_runner, run_research
@@ -22,6 +24,16 @@ from gateway.security.redaction import register_settings
 from gateway.settings import get_settings
 
 app = FastAPI(title="multi-agent-gateway", version="0.1.0")
+
+# Single self-contained page, served same-origin so there is no CORS surface to configure.
+# A FileResponse rather than a StaticFiles mount: there is one asset, and a mount would add a
+# directory of things served verbatim next to an endpoint that handles untrusted content.
+_UI = Path(__file__).resolve().parent / "static" / "index.html"
+
+
+@app.get("/", include_in_schema=False)
+def index() -> FileResponse:
+    return FileResponse(_UI, media_type="text/html")
 
 # Worst-case fallback/retry chains can sum past any one client's timeout (multiple LLM
 # calls per request, each with its own retry ladder, plus several judge calls with their
