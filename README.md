@@ -102,15 +102,18 @@ bash scripts/run_garak.sh                  # model-level probes against the runn
 - **garak probes the model, not the tool layer.** Its results and the scope-gate results are
   reported separately rather than blended into one flattering figure.
 - **The judge has been checked against a model, not a human.** Claude Opus 5 scored 18
-  reports independently: depth ρ=0.80, coherence ρ=0.72. That rules out the judge being
-  idiosyncratic, but two models can share a blind spot, so it is not human validation —
+  reports independently: depth ρ=**0.86 ± 0.03**, coherence ρ=**0.74 ± 0.01**, measured over
+  5 passes of the same reports rather than quoted from one run. That rules out the judge
+  being idiosyncratic, but two models can share a blind spot, so it is not human validation —
   `results/judge_agreement.md` says so explicitly and the human gate stays open. The judge
-  also runs +0.67 high on coherence, which cancels for provider comparison but inflates the
-  absolute gate threshold. Citation sub-scores do not depend on the judge at all.
-- **The judge does not reproduce its own scores.** Re-scoring the same reports at
-  temperature 0 changed 6 of 34 scores, moving depth ρ by −0.06 and coherence ρ by −0.08
-  without a single input changing. Agreement figures are quoted to two decimals here
-  because the third is noise, and any single run should be read as ±0.08 rather than exact.
+  also runs +0.54 ± 0.03 high on coherence, which cancels for provider comparison but
+  inflates the absolute gate threshold. Citation sub-scores do not depend on the judge at all.
+- **The judge does not reproduce its own scores, and the error bars above are why.** At
+  temperature 0, 3 of 36 scores differed between the first and last of 5 back-to-back passes.
+  Two runs taken days apart drifted further — 6 of 34 — so ±0.03 is the within-session
+  spread and likely understates day-to-day variation. `--repeat` on
+  `scripts/judge_agreement.py` re-measures it; any figure quoted from a single run is a point
+  estimate with unstated error.
 - **Half the matrix cannot produce a regression verdict.** A silent regression is defined
   relative to the primary, so a question the primary failed yields no verdict either way.
   OpenRouter passed 15 of 30, so the 11 regressions are counted across 15 comparable

@@ -18,3 +18,6 @@ results/runs/
 
 # run_eval checkpoint — transient, superseded by provider_matrix.json
 results/provider_matrix_rows_*.jsonl
+
+# judge_agreement multi-pass checkpoint — transient
+results/judge_passes.jsonl

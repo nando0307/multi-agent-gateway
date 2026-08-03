@@ -27,6 +27,7 @@ measuring noise, regardless of rater type.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import statistics
 import sys
@@ -226,41 +227,107 @@ def cmd_score(args) -> int:
         print(f"judge unavailable: {exc}", file=sys.stderr)
         return 2
 
-    rows = []
-    for i, item in enumerate(filled):
-        report = reports[item["label_id"]]
-        # Pace the loop. Scoring n reports is 2n judge calls back to back, and the judge
-        # sits on a free tier that rate-limits sustained bursts -- 36 calls with no gap
-        # returned a 429 that outlasted Judge._ask's whole retry ladder, so the run died
-        # after having already spent most of its calls. The ladder is for a blip; this is
-        # for continuous pressure. --pace 0 disables it when the judge is a paid tier.
-        if i and args.pace:
-            time.sleep(args.pace)
-        print(f"judging {item['label_id']}... ({i + 1}/{len(filled)})", flush=True)
-        rows.append({
-            **item,
-            "ref_depth": float(pick(item, "depth")),
-            "ref_coherence": float(pick(item, "coherence")),
-            "judge_depth": judge.depth(report["question"], report["report"]).score,
-            "judge_coherence": judge.coherence(report["question"], report["report"]).score,
-        })
+    def score_once(pass_idx: int) -> list[dict]:
+        scored = []
+        for i, item in enumerate(filled):
+            report = reports[item["label_id"]]
+            # Pace the loop. Scoring n reports is 2n judge calls back to back, and the judge
+            # sits on a free tier that rate-limits sustained bursts -- 36 calls with no gap
+            # returned a 429 that outlasted Judge._ask's whole retry ladder, so the run died
+            # after having already spent most of its calls. The ladder is for a blip; this is
+            # for continuous pressure. --pace 0 disables it when the judge is a paid tier.
+            if (i or pass_idx) and args.pace:
+                time.sleep(args.pace)
+            label = f"[pass {pass_idx + 1}/{args.repeat}] " if args.repeat > 1 else ""
+            print(f"{label}judging {item['label_id']}... ({i + 1}/{len(filled)})", flush=True)
+            scored.append({
+                **item,
+                "ref_depth": float(pick(item, "depth")),
+                "ref_coherence": float(pick(item, "coherence")),
+                "judge_depth": judge.depth(report["question"], report["report"]).score,
+                "judge_coherence": judge.coherence(report["question"], report["report"]).score,
+            })
+        return scored
 
-    out = {}
-    for dim in ("depth", "coherence"):
-        human = [float(r[f"ref_{dim}"]) for r in rows]
-        model = [float(r[f"judge_{dim}"]) for r in rows]
-        within1 = sum(abs(h - m) <= 1 for h, m in zip(human, model)) / len(rows)
-        out[dim] = {
-            "spearman": round(spearman(human, model), 3),
-            "within_1": round(100 * within1, 1),
-            "mean_human": round(statistics.mean(human), 2),
-            "mean_judge": round(statistics.mean(model), 2),
-            "bias": round(statistics.mean(model) - statistics.mean(human), 2),
-        }
+    def summarise(scored: list[dict]) -> dict:
+        stats = {}
+        for dim in ("depth", "coherence"):
+            human = [float(r[f"ref_{dim}"]) for r in scored]
+            model = [float(r[f"judge_{dim}"]) for r in scored]
+            within1 = sum(abs(h - m) <= 1 for h, m in zip(human, model)) / len(scored)
+            stats[dim] = {
+                "spearman": round(spearman(human, model), 3),
+                "within_1": round(100 * within1, 1),
+                "mean_human": round(statistics.mean(human), 2),
+                "mean_judge": round(statistics.mean(model), 2),
+                "bias": round(statistics.mean(model) - statistics.mean(human), 2),
+            }
+        return stats
 
-    verdict = all(
-        out[d]["spearman"] >= 0.6 for d in out if out[d]["spearman"] == out[d]["spearman"]
-    )
+    # --repeat scores the identical reports N times. The judge is nominally deterministic at
+    # temperature 0 and is not: a single run therefore reports a point estimate with unknown
+    # error, and the provider matrix inherits that error. Repeating turns "rho = 0.801" into
+    # "rho = 0.80 +/- sd", which is the honest form given the instrument.
+    # Checkpoint each pass. 5 passes is 180 judge calls against a free tier that intermittently
+    # returns "service temporarily overloaded"; one such burst outlasted the retry ladder in
+    # pass 4 and took the three completed passes with it, because they were only in memory.
+    # Same failure the provider matrix had, same fix. The fingerprint covers the judge model
+    # and the exact reports+labels being scored, so a pass recorded against different inputs
+    # is never silently reused.
+    fingerprint = hashlib.sha256(json.dumps({
+        "judge": settings.judge_model,
+        "items": [(i["label_id"], pick(i, "depth"), pick(i, "coherence"),
+                   reports[i["label_id"]]["report"]) for i in filled],
+    }, sort_keys=True, default=str).encode()).hexdigest()[:16]
+    passes_path = ROOT / "results" / "judge_passes.jsonl"
+
+    passes: list[list[dict]] = []
+    if passes_path.exists() and not args.fresh:
+        for line in passes_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            rec = json.loads(line)
+            if rec.get("fingerprint") == fingerprint:
+                passes.append(rec["rows"])
+        if passes:
+            print(f"reusing {len(passes)} completed pass(es) from {passes_path.name}")
+    elif args.fresh:
+        passes_path.unlink(missing_ok=True)
+
+    passes = passes[:args.repeat]
+    for k in range(len(passes), args.repeat):
+        scored = score_once(k)
+        passes.append(scored)
+        with passes_path.open("a") as fh:
+            fh.write(json.dumps({"fingerprint": fingerprint, "rows": scored}) + "\n")
+    rows = passes[-1]
+    per_pass = [summarise(p) for p in passes]
+    out = per_pass[-1]
+
+    spread = {}
+    if args.repeat > 1:
+        for dim in ("depth", "coherence"):
+            rhos = [s[dim]["spearman"] for s in per_pass]
+            biases = [s[dim]["bias"] for s in per_pass]
+            spread[dim] = {
+                "rho_mean": round(statistics.mean(rhos), 3),
+                "rho_sd": round(statistics.stdev(rhos), 3) if len(rhos) > 1 else 0.0,
+                "rho_min": min(rhos), "rho_max": max(rhos),
+                "bias_mean": round(statistics.mean(biases), 2),
+                "bias_sd": round(statistics.stdev(biases), 3) if len(biases) > 1 else 0.0,
+            }
+        # How many individual scores moved between the first and last pass, on identical input.
+        flips = sum(
+            1 for a, b in zip(passes[0], passes[-1])
+            for k in ("judge_depth", "judge_coherence") if a[k] != b[k]
+        )
+        spread["flips"] = flips
+        spread["cells"] = len(rows) * 2
+
+    # Judge the threshold on the mean when repeated, not on whichever pass happened to be last.
+    def _rho(dim):
+        return spread[dim]["rho_mean"] if spread else out[dim]["spearman"]
+    verdict = all(_rho(d) >= 0.6 for d in ("depth", "coherence") if _rho(d) == _rho(d))
     human_gate = rater_type == "human"
     lines = [
         f"# Phase 6 - Judge agreement with an independent rater",
@@ -288,15 +355,30 @@ def cmd_score(args) -> int:
     # next one, which is exactly how the stale gpt-oss-120b numbers survived as long as they
     # did. The figures below are a fixed record of the 2026-08-02 re-run, not recomputed:
     # measuring drift needs two runs and this command only has one.
-    lines += [
-        "> **These scores do not reproduce exactly.** Re-scoring byte-identical reports at "
-        "temperature 0 on 2026-08-02 changed **6 of 34** judge scores, moving depth rho "
-        "0.903 -> 0.844 and coherence rho 0.879 -> 0.799 with no input change at all. Read any "
-        "single run as +/-0.08 rather than exact, and treat the third decimal as noise. Phase "
-        "6's *\"scores reproduce across two runs\"* acceptance criterion is therefore **not "
-        "met**. Re-run this command twice before quoting a figure that matters.",
-        "",
-    ]
+    if spread:
+        lines += [
+            f"> **Reproducibility, measured over {args.repeat} passes of the identical reports.** "
+            f"The judge is nominally deterministic at temperature 0 and is not: "
+            f"**{spread['flips']} of {spread['cells']}** individual scores differed between the "
+            f"first and last pass. Spearman rho came out "
+            f"**{spread['depth']['rho_mean']} +/- {spread['depth']['rho_sd']}** on depth "
+            f"(range {spread['depth']['rho_min']}-{spread['depth']['rho_max']}) and "
+            f"**{spread['coherence']['rho_mean']} +/- {spread['coherence']['rho_sd']}** on "
+            f"coherence (range {spread['coherence']['rho_min']}-{spread['coherence']['rho_max']}). "
+            "Quote the mean with its spread, not a single run's third decimal. Phase 6's "
+            "*\"scores reproduce across two runs\"* acceptance criterion is **not met**; this "
+            "block is what replaces it -- the instrument has error bars and they are stated.",
+            "",
+        ]
+    else:
+        lines += [
+            "> **These scores do not reproduce exactly.** Re-scoring byte-identical reports at "
+            "temperature 0 on 2026-08-02 changed **6 of 34** judge scores, moving depth rho "
+            "0.903 -> 0.844 and coherence rho 0.879 -> 0.799 with no input change at all. Read "
+            "any single run as +/-0.08 rather than exact. Run with `--repeat 5` to measure the "
+            "spread on this judge rather than relying on this fixed record.",
+            "",
+        ]
     lines += [
         "| dimension | Spearman rho | within +/-1 | mean human | mean judge | judge bias |",
         "|---|---|---|---|---|---|",
@@ -326,6 +408,9 @@ def cmd_score(args) -> int:
         "",
         "## Per-report",
         "",
+        (f"Per-report scores below are from the final pass of {args.repeat}; other passes differ "
+         f"on {spread['flips']} cell(s)." if spread else ""),
+        "",
         f"| id | question | provider | {rater_type} depth | judge depth | {rater_type} coh | judge coh |",
         "|---|---|---|---|---|---|---|",
     ]
@@ -341,7 +426,16 @@ def cmd_score(args) -> int:
     path = ROOT / "results" / "judge_agreement.md"
     path.write_text("\n".join(lines))
     for dim, s in out.items():
-        print(f"{dim:<10} rho={s['spearman']:<6} within1={s['within_1']}%  bias={s['bias']:+}")
+        if spread:
+            sp = spread[dim]
+            print(f"{dim:<10} rho={sp['rho_mean']} +/- {sp['rho_sd']} "
+                  f"(range {sp['rho_min']}-{sp['rho_max']}, n={args.repeat} passes)  "
+                  f"bias={sp['bias_mean']:+} +/- {sp['bias_sd']}")
+        else:
+            print(f"{dim:<10} rho={s['spearman']:<6} within1={s['within_1']}%  bias={s['bias']:+}")
+    if spread:
+        print(f"{'drift':<10} {spread['flips']}/{spread['cells']} scores differed between "
+              f"first and last pass on identical input")
     print(f"\nverdict: {'PASS' if verdict else 'FAIL'}   wrote {path}")
     return 0
 
@@ -361,6 +455,11 @@ def main() -> int:
     s.add_argument("--rater", default=None, help="who or what produced the labels")
     s.add_argument("--rater-type", choices=["human", "model"], default=None,
                    help="overrides the type inferred from the key naming")
+    s.add_argument("--fresh", action="store_true",
+                   help="discard checkpointed passes and re-score from scratch")
+    s.add_argument("--repeat", type=int, default=1,
+                   help="score the same reports N times and report rho as mean +/- sd; the "
+                        "judge is not deterministic at temperature 0, so N=1 hides its error")
     s.add_argument("--pace", type=float, default=3.0,
                    help="seconds to wait between reports; 0 to disable (paid judge tier)")
     s.set_defaults(func=cmd_score)
