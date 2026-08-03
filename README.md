@@ -15,6 +15,10 @@ Read the [Limitations](#limitations) before quoting any of these.
 
 ## Architecture
 
+`GET /` serves a single-page browser UI over this same endpoint — question in, report and
+scores out, including the citation sub-scores below, since those are checked against the
+run's tool-call trace rather than by a judge.
+
 ```
 POST /research
       │
@@ -153,13 +157,15 @@ bash scripts/run_garak.sh                  # model-level probes against the runn
 
 ```
 src/gateway/
-  llm/         router, fallback chain, LlamaIndex bridge, run tracing
-  agents/      planner, researcher, synthesizer, LlamaIndex Workflow
-  tools/       web search, SSRF-aware fetch, the tool-registry choke point
-  security/    scope validation, untrusted-content handling, secret redaction
-  eval/        deterministic citation checks, judge, rubric, quality gate
-scripts/       every number above is printed by one of these
-datasets/      30 research questions, 41 attacks, 40 benign lookalikes
-results/       committed evidence
-PLAN.md        the build plan and its progress log
+  llm/           router, fallback chain, LlamaIndex bridge, run tracing
+  agents/        planner, researcher, synthesizer, LlamaIndex Workflow
+  tools/         web search, SSRF-aware fetch, the tool-registry choke point
+  security/      scope validation, untrusted-content handling, secret redaction
+  eval/          deterministic citation checks, judge, rubric, quality gate
+  static/        the web UI (index.html) served at GET /, self-contained, no build step
+Dockerfile       multi-stage, non-root, uv.lock-pinned — see Quickstart
+scripts/         every number above is printed by one of these
+datasets/        30 research questions, 41 attacks, 40 benign lookalikes
+results/         committed evidence
+PLAN.md          the build plan and its progress log
 ```
