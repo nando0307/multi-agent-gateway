@@ -350,6 +350,9 @@ def cmd_score(args) -> int:
             "so the provider matrix is not being ordered by one small model's private tastes.",
             "",
         ]
+    if args.label_note:
+        lines += [f"> **Label provenance.** {args.label_note}", ""]
+
     # Emitted from here rather than written into the .md by hand, because this file is fully
     # regenerated on every `score` run -- a hand-added caveat would be silently erased by the
     # next one, which is exactly how the stale gpt-oss-120b numbers survived as long as they
@@ -455,6 +458,10 @@ def main() -> int:
     s.add_argument("--rater", default=None, help="who or what produced the labels")
     s.add_argument("--rater-type", choices=["human", "model"], default=None,
                    help="overrides the type inferred from the key naming")
+    s.add_argument("--label-note", default=None,
+                   help="provenance of the reference labels, emitted into the report; use it "
+                        "to record anything that qualifies them (e.g. produced with another "
+                        "rater's scores visible, which makes them anchored rather than blind)")
     s.add_argument("--fresh", action="store_true",
                    help="discard checkpointed passes and re-score from scratch")
     s.add_argument("--repeat", type=int, default=1,

@@ -5,8 +5,8 @@
 **Timeline:** 10 working days (1–2 weeks)
 **Status:** Phases 0–6, 7, 9 done · Phase 8 in progress (garak: DanInTheWild done, encoding.InjectBase64
 ~40% as of 2026-07-30 17:00, promptinject.HijackHateHumans not yet started, baseline run + bandit/leak
-writeup still needed) · human label gate still open
-**Last updated:** 2026-07-31
+writeup still needed) · human label gate closed 2026-08-03, anchored not blind (see D5/Phase 6)
+**Last updated:** 2026-08-03
 **Providers (N=4):** Gemini · NVIDIA NIM · OpenRouter · Groq — *Azure OpenAI dropped, no access; Ollama
 dropped from the default chain 2026-07-28, see D3*
 **Search:** Tavily (+ Parallel.ai fallback, added 2026-07-29) · **Judge:** `nvidia_nim/deepseek-ai/deepseek-v4-flash`
@@ -553,27 +553,30 @@ validation".
   `results/latency.md` before the "after measuring" clause on the resume is true.
   First result in: Gemini p50 9.3s / p95 23.1s / 1 failure in 20 — a poor primary, and it
   currently sits first in the chain. The benchmark demoting it is the point of this phase.
-* **Phase 6 — run against a *model* rater, not a human.** Claude Opus 5 scored the reports:
-  against the current `deepseek-v4-flash` judge, depth ρ=**0.86 ± 0.03**, coherence
-  ρ=**0.74 ± 0.01** on n=18 over 5 passes, both clear of the 0.6 threshold. That shows the judge is not idiosyncratic relative to a
-  stronger model. It is **not** human validation — two models can share a blind spot — so
-  `results/judge_agreement.md` labels itself inter-model agreement and the human gate stays
-  open. To close it, re-score the same sheet by hand using `human_depth`/`human_coherence`
-  keys and re-run.
+* **Phase 6 — model rater, then a human pass that closed the gate but is anchored, not
+  blind.** Claude Opus 5 scored the reports against the current `deepseek-v4-flash` judge:
+  depth ρ=0.86 ± 0.03, coherence ρ=0.74 ± 0.01 on n=18 over 5 passes, both clear of the 0.6
+  threshold — inter-model agreement, not human validation on its own. The project author
+  then re-scored the same 18 with `human_depth`/`human_coherence` keys, which is what the
+  gate actually requires: depth ρ=**0.85 ± 0.04**, coherence ρ=**0.79 ± 0.04**. But this
+  pass reviewed and adjusted the model rater's already-visible scores (3 of 36 cells
+  changed) rather than labelling blind, so it is anchored — `results/judge_agreement.md`
+  records that provenance via `--label-note` rather than presenting a clean validation. A
+  genuinely blind pass is still open: `results/label_sheet.md` carries no scores at all.
 * **The judge does not reproduce its own scores — the criterion is replaced, not met.**
   Phase 6 required "scores reproduce across two runs". They do not, so the criterion has been
   superseded by a measured one: `--repeat N` scores the same reports N times and reports ρ as
-  mean ± sd. Over 5 passes, **3 of 36** scores differed between first and last, giving
-  ρ=0.86 ± 0.03 (depth) and 0.74 ± 0.01 (coherence). Two runs taken days apart drifted
-  further (6 of 34), so the within-session sd likely understates day-to-day variation. An
-  instrument with stated error bars is a better acceptance test than one asserted to be
-  exact — but the original criterion is not met and should not be marked as such.
+  mean ± sd. Over 5 passes, drift was 3/36 against the model rater and 4/36 against the human
+  rater. Two runs taken days apart drifted further (6 of 34), so the within-session sd likely
+  understates day-to-day variation. An instrument with stated error bars is a better
+  acceptance test than one asserted to be exact — but the original criterion is not met and
+  should not be marked as such.
 * **n is 18 again.** L07's labels were nulled when its ollama report was regenerated
   (`ba25cc2`), which dropped it from the 2026-07-31 run. Re-labelled 2026-08-02 by the same
   claude-opus-5 reference rater (depth 3, coherence 4) against the current report text. It is
   a genuine disagreement, not an outlier: the judge scored it 2|3, within ±1 on both.
-* **Judge inflates coherence by +0.54 ± 0.03** against the reference rater (depth is
-  near-neutral at +0.28 ± 0.04). Provider *comparison* is unaffected — a constant offset cancels — but the
+* **Judge inflates coherence by +0.59 ± 0.06** against the human rater (depth is
+  near-neutral at +0.24 ± 0.06). Provider *comparison* is unaffected — a constant offset cancels — but the
   absolute 0.70 gate threshold sits against an inflated coherence term and should be
   recalibrated before it is treated as meaningful.
 * **Phase 7** — `run_eval.py` ready; run after the judge clears the gate.
@@ -629,3 +632,4 @@ validation".
 | 2026-08-02 | 6 | Re-labelled L07 (claude-opus-5, depth 3 / coherence 4) to restore n=18, and re-ran `judge_agreement.py score` | depth **ρ=0.801** (bias +0.39, 94.4% within ±1), coherence **ρ=0.723** (bias +0.67, 77.8% within ±1), **n=18** | PASS on the 0.6 threshold, but the run exposed a bigger problem than the missing row: **the judge does not reproduce itself.** Re-scoring the same 17 reports at temperature 0 changed 6 of 34 scores, moving depth ρ 0.903→0.844 and coherence ρ 0.879→0.799 before L07 was added at all — so about half the headline drop is judge drift, not the new row. Phase 6's "scores reproduce across two runs" acceptance criterion is therefore **not met**, and had never been tested until now. Also added `--pace` (default 3s) to `cmd_score`: 2n back-to-back judge calls hit a 429 that outlasted the retry ladder and killed a run mid-way |
 | 2026-08-03 | 7 | Re-ran the full provider matrix against the current `deepseek-v4-flash` judge (`run_eval.py --questions 30`), completing 120/120 after OpenRouter credits were restored | gemini **0.758** (73.3% pass), nim **0.707** (60.0%), openrouter **0.688** (50.0%), groq **0.660** (50.0%); **11 silent regressions across 15 comparable questions**, worst delta -0.23 | The matrix is now measured on the same judge as `judge_agreement.md`, closing the calibration gap. Two findings worth carrying: (a) `comparable` is 15, not 30 -- the primary passed half the questions, so half the matrix yields no regression verdict either way, which a bare "11 caught" would have hidden; (b) the p95-ordered primary is third on quality, so the best provider only serves when the fastest fails -- a design consequence of D-latency-ordering, flagged not changed. Root cause of the 3-day block was **OpenRouter credit exhaustion, not the 50/day cap**: OpenRouter prices the reservation on `max_tokens`, so 20-token smoke calls passed while 900-token syntheses were refused instantly, which is why every health check looked green. Report text is now committed (`provider_matrix_reports_30q.jsonl`), so the next judge swap is a re-judge rather than a 2-hour re-run |
 | 2026-08-03 | 6 | Added `--repeat N` to `judge_agreement.py score` and measured the judge's own reproducibility over 5 passes of the identical 18 reports | depth **ρ=0.859 ± 0.026** (range 0.814-0.883), coherence **ρ=0.743 ± 0.011** (range 0.734-0.761), drift **3/36** scores between first and last pass | Replaces the point estimate (0.801/0.723 from one run) with a figure that states its own error. The spread is tighter than the earlier two-runs-days-apart comparison suggested (6/34 cells), so within-session sd likely understates day-to-day drift — both numbers are reported rather than the flattering one. Phase 6's "scores reproduce across two runs" criterion is superseded by this rather than quietly ticked. Two attempts died at pass 4 to NVIDIA overload bursts that outlast the retry ladder, taking completed passes with them, so passes are now checkpointed to `results/judge_passes.jsonl` and reused on resume — the third component to need this after the provider matrix and its report corpus |
+| 2026-08-03 | 6 | Closed the human label gate: re-scored the same 18 reports with `human_depth`/`human_coherence` keys instead of `model_*`, and added `--label-note` to `judge_agreement.py score` so the report can state the labels' provenance instead of losing it on the next regeneration (the file is fully rewritten every run) | depth **ρ=0.846 ± 0.035** (range 0.799-0.895), coherence **ρ=0.79 ± 0.037** (range 0.748-0.839), drift **4/36** between first and last of 5 passes | PASS, gate closed — but the labels are anchored, not blind: 3 of 36 cells were produced by reviewing and adjusting claude-opus-5's already-visible scores rather than scoring cold, which the docstring's own two-phase design exists to prevent ("seeing them first would anchor the labeller"). Recorded via `--label-note` rather than silently treated as a clean validation. `results/label_sheet.md` still carries zero scores and is the artifact for a genuine blind pass, which remains open despite the gate nominally closing |

@@ -101,19 +101,25 @@ bash scripts/run_garak.sh                  # model-level probes against the runn
   two.
 - **garak probes the model, not the tool layer.** Its results and the scope-gate results are
   reported separately rather than blended into one flattering figure.
-- **The judge has been checked against a model, not a human.** Claude Opus 5 scored 18
-  reports independently: depth ρ=**0.86 ± 0.03**, coherence ρ=**0.74 ± 0.01**, measured over
-  5 passes of the same reports rather than quoted from one run. That rules out the judge
-  being idiosyncratic, but two models can share a blind spot, so it is not human validation —
-  `results/judge_agreement.md` says so explicitly and the human gate stays open. The judge
-  also runs +0.54 ± 0.03 high on coherence, which cancels for provider comparison but
-  inflates the absolute gate threshold. Citation sub-scores do not depend on the judge at all.
+- **The judge has been checked against both a model and a human — the human pass is anchored,
+  not blind.** Claude Opus 5 scored 18 reports independently: depth ρ=0.86 ± 0.03, coherence
+  ρ=0.74 ± 0.01 (5 passes). The project author then scored the same 18 using
+  `human_depth`/`human_coherence` keys, which is what closes Phase 6's gate — but did so by
+  reviewing and adjusting the model rater's already-visible scores rather than labelling
+  blind, changing 3 of 36 cells: depth ρ=**0.85 ± 0.04**, coherence ρ=**0.79 ± 0.04**.
+  Anchoring inflates agreement, so read this as a human *review* of a model's labels, not
+  independent human judgement — `results/judge_agreement.md` records the provenance
+  explicitly rather than presenting it as a clean validation. A genuinely blind pass is still
+  open: `results/label_sheet.md` carries no scores at all and is ready for one. The judge also
+  runs +0.59 ± 0.06 high on coherence against the human labels, which cancels for provider
+  comparison but inflates the absolute gate threshold. Citation sub-scores do not depend on
+  the judge at all.
 - **The judge does not reproduce its own scores, and the error bars above are why.** At
-  temperature 0, 3 of 36 scores differed between the first and last of 5 back-to-back passes.
-  Two runs taken days apart drifted further — 6 of 34 — so ±0.03 is the within-session
-  spread and likely understates day-to-day variation. `--repeat` on
-  `scripts/judge_agreement.py` re-measures it; any figure quoted from a single run is a point
-  estimate with unstated error.
+  temperature 0, 3 of 36 scores differed between the first and last pass against the model
+  rater, 4 of 36 against the human rater. Two runs taken days apart drifted further — 6 of
+  34 — so a within-session spread of ±0.03–0.04 likely understates day-to-day variation.
+  `--repeat` on `scripts/judge_agreement.py` re-measures it; any figure quoted from a single
+  run is a point estimate with unstated error.
 - **Half the matrix cannot produce a regression verdict.** A silent regression is defined
   relative to the primary, so a question the primary failed yields no verdict either way.
   OpenRouter passed 15 of 30, so the 11 regressions are counted across 15 comparable
