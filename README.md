@@ -67,7 +67,16 @@ uv sync
 cp .env.example .env      # fill in what you have; providers without keys are simply absent
 uv run gateway providers  # the chain that will actually be used, and N
 uv run gateway research "How much grid-scale storage was added in 2024?"
-uv run gateway serve      # HTTP API on :8000
+uv run gateway serve      # HTTP API and web UI on :8000
+```
+
+Or in a container — the image needs at least one provider key at runtime, or `build_gateway()`
+fails fast on startup rather than serving a gateway with nothing behind it:
+
+```bash
+docker build -t multi-agent-gateway .
+docker run --rm -p 8000:8000 --env-file .env multi-agent-gateway
+# → http://localhost:8000  (web UI)   http://localhost:8000/health
 ```
 
 ## Reproducing the numbers

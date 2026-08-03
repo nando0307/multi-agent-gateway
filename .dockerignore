@@ -1,0 +1,27 @@
+# Keeps the build context small and, more importantly, keeps secrets and local state out of
+# the image and out of the build cache -- .env never gets a COPY instruction in the Dockerfile,
+# but excluding it here means it can't leak in even if that ever changes by accident.
+.git/
+.github/
+
+.venv/
+.venv-garak/
+__pycache__/
+*.py[oc]
+*.egg-info/
+build/
+dist/
+
+.env
+.env.example
+.cache/
+.ua/
+.pytest_cache/
+
+results/
+datasets/
+tests/
+scripts/
+
+*.md
+!README.md
