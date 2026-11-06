@@ -158,14 +158,20 @@ No continuation from another model is appended. Caller disconnect cancels upstre
 work at this HTTP boundary; Boss must also close its gateway request on cancellation.
 
 One `GENERATION_DEADLINE_S` wall-clock budget (default 60 seconds) covers the entire
-request. Each provider gets at most `GENERATION_ATTEMPT_S` (default 15 seconds), its
+request. Each provider gets at most `GENERATION_ATTEMPT_S` (default 30 seconds), its
 existing provider-specific timeout, and the remaining total budget, whichever is least.
+30 seconds is deliberately above the measured primary tail (gemini p95 ~23 seconds for a
+200-word prompt, [`results/latency.md`](results/latency.md)); a window below the primary's
+own p95 converts normal tail latency into failover. Once a stream has emitted content the
+attempt is no longer bounded by that window, only by the remaining total budget, so a
+slow-but-progressing answer is finished rather than cut mid-stream.
 There are no nested retries or per-provider full-deadline resets. Connection failures,
-timeouts, 429 and 500/502/503/504 advance to backups; invalid requests, context errors,
+timeouts, 429 and 500/502/503/504 advance to backups; a provider LiteLLM has placed in
+cooldown (no healthy deployments) advances too; invalid requests, context errors,
 safety refusals, invalid schema output and credential errors do not. Blank completions
 and pre-content incomplete streams also advance. All-blank exhaustion is 503.
-Lower timeouts can manufacture failover under normal provider latency; tune with
-synthetic probes. Four enabled providers are not four independent infrastructure paths.
+Lower timeouts can manufacture failover under normal provider latency; tune against
+measured latency, not intuition. Four enabled providers are not four independent infrastructure paths.
 
 Errors never include upstream response bodies, credentials or prompt contents:
 

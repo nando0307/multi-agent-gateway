@@ -73,7 +73,7 @@ def wire(request):
                         return
                     if mode == "hang":
                         for _ in range(100):
-                            time.sleep(0.02)
+                            time.sleep(0.01)
                             send({"content": "."})
                     send({}, "content_filter" if mode == "refusal" else "stop")
                     self.wfile.write(b"data: [DONE]\n\n")
@@ -205,9 +205,21 @@ def test_stream_disconnect_cancels_upstream(wire):
     modes["gemini"] = "hang"
     with client.stream("POST", "/v1/chat/completions", json={**PAYLOAD, "stream": True}) as response:
         for line in response.iter_lines():
-            if "answer from gemini" in line:
+            if '"content"' in line:
                 break
     assert closed.wait(2), "Upstream connection was not closed after client disconnect"
+    assert calls == ["gemini"]
+
+
+def test_started_stream_is_not_cut_by_the_attempt_window(wire):
+    """Once content is emitted, only the total budget may interrupt the attempt."""
+    gateway, client, modes, calls, _, _ = wire
+    gateway.settings.generation_attempt_s = 0.2   # "hang" drips content for ~1s
+    gateway.settings.generation_deadline_s = 10
+    modes["gemini"] = "hang"
+    response = client.post("/v1/chat/completions", json={**PAYLOAD, "stream": True})
+    assert "[DONE]" in response.text, response.text
+    assert '"finish_reason":"stop"' in response.text
     assert calls == ["gemini"]
 
 
@@ -259,12 +271,15 @@ def test_nonstream_disconnect_stops_fallback(wire):
     assert calls == ["gemini"]
 
 
-@pytest.mark.parametrize("mode,code", [("hang", "stream_interrupted"), ("drop", "providers_exhausted")])
+@pytest.mark.parametrize("mode,code", [("hang", "generation_deadline"), ("drop", "providers_exhausted")])
 def test_stream_errors_keep_their_failure_reason(wire, mode, code):
     gateway, client, modes, calls, _, _ = wire
     assert client.post("/v1/chat/completions", json=PAYLOAD).status_code == 200
     calls.clear()
     gateway.settings.generation_attempt_s = 0.2
+    if mode == "hang":
+        # Content starts, so the remaining total budget bounds the attempt, not the window.
+        gateway.settings.generation_deadline_s = 0.5
     modes.update({name: mode for name in DEFAULT_CHAIN})
     response = client.post("/v1/chat/completions", json={**PAYLOAD, "stream": True})
     assert code in response.text

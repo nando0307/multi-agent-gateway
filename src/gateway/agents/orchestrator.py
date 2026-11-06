@@ -24,7 +24,7 @@ from gateway.agents.researcher import research
 from gateway.agents.synthesizer import synthesize
 from gateway.llm.events import RunTrace, trace_run
 from gateway.llm.model_list import PRIMARY_ALIAS
-from gateway.llm.router import Gateway
+from gateway.llm.router import AllProvidersExhausted, Gateway
 from gateway.security.redaction import redact_obj
 from gateway.security.scope import RunBudget, ScopePolicy
 from gateway.tools.registry import ToolRunner, ToolSpec
@@ -116,19 +116,26 @@ def run_research(
 ) -> tuple[ResearchResult, RunTrace]:
     """Synchronous entry point: run the workflow, then apply the quality gate."""
     with trace_run(trace, question=question) as active:
-        workflow = ResearchWorkflow(gateway, runner, model=model, timeout=None)
-        out = asyncio.run(workflow.run_question(question))
+        try:
+            workflow = ResearchWorkflow(gateway, runner, model=model, timeout=None)
+            out = asyncio.run(workflow.run_question(question))
 
-        result = ResearchResult(
-            question=question,
-            report=out["report"],
-            evidence=list(out["evidence"]),
-            sub_questions=list(out["sub_questions"]),
-            served_by=sorted(p for p in active.providers_used() if p),
-        )
+            result = ResearchResult(
+                question=question,
+                report=out["report"],
+                evidence=list(out["evidence"]),
+                sub_questions=list(out["sub_questions"]),
+                served_by=sorted(p for p in active.providers_used() if p),
+            )
 
-        if gate is not None:
-            result = gate.apply(result, active, gateway=gateway, runner=runner, model=model)
+            if gate is not None:
+                result = gate.apply(result, active, gateway=gateway, runner=runner, model=model)
+        except AllProvidersExhausted:
+            raise
+        except Exception as exc:
+            # Research callers were written against one normalised failure: every provider
+            # failed. Provider taxonomy belongs to the generation endpoint, not to them.
+            raise AllProvidersExhausted(model, [], exc) from exc
 
     if save_dir is not None:
         save_dir.mkdir(parents=True, exist_ok=True)

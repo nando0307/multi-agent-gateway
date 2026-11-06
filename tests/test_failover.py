@@ -51,6 +51,37 @@ def test_all_providers_down_raises_cleanly_and_does_not_hang(messages):
     assert "research-primary" in str(exc.value)
 
 
+def test_a_cooled_provider_advances_the_chain_instead_of_aborting_it(messages):
+    """A sustained outage must fail over, not answer 400 invalid_request.
+
+    After ``allowed_fails`` failures LiteLLM cools the deployment and starts raising
+    ``RouterRateLimitError`` (a ValueError with no status_code) for it. That is a provider
+    outage belonging to the same class as 429/5xx: the chain has to keep walking.
+    """
+    gw = make_gateway({"gemini": FAIL_500, "nim": FAIL_500}, id_prefix="deployment::")
+    errors = []
+    for _ in range(6):
+        result = gw.complete(messages)
+        assert result.served_by == "openrouter", result.attempts
+        errors.extend(attempt.error_class for attempt in result.attempts)
+    assert "RouterRateLimitError" in errors, errors
+
+
+def test_every_provider_cooled_is_exhaustion_not_a_client_error(messages):
+    gw = make_gateway({"gemini": FAIL_500, "openrouter": FAIL_500},
+                      chain=("gemini", "openrouter"), id_prefix="deployment::")
+    error = None
+    for _ in range(6):
+        try:
+            gw.complete(messages)
+        except AllProvidersExhausted as exc:
+            error = exc
+        else:
+            error = None
+    assert error is not None
+    assert [a.error_class for a in error.attempts] == ["RouterRateLimitError", "RouterRateLimitError"]
+
+
 def test_only_local_tier_survives(messages):
     """The terminal tier is local and cannot rate-limit -- this is why Y approaches 0."""
     gw = make_gateway({n: FAIL_429 for n in DEFAULT_CHAIN if n != "ollama"})

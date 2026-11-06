@@ -8,10 +8,18 @@ URL never reaches the fetcher.
 
 from __future__ import annotations
 
+import io
 import json
+import sys
+
+import litellm
+import pytest
+from fastapi.testclient import TestClient
+from rich.console import Console
 
 from gateway.agents.orchestrator import build_runner, run_research
 from gateway.eval.gate import QualityGate
+from gateway.llm.router import AllProvidersExhausted
 from gateway.security.scope import RunBudget
 from gateway.tools.web_search import SearchHit
 
@@ -130,3 +138,50 @@ def test_trace_is_persisted_with_secrets_redacted(tmp_path):
     assert "sk-PIPELINE-SENTINEL-0123456789" not in saved
     payload = json.loads(saved)
     assert payload["tool_calls"]
+
+
+# --- legacy caller contracts ---------------------------------------------------
+class RefusingGateway(FakeGateway):
+    """A provider that rejects the credentials: deliberately non-retryable."""
+
+    def complete(self, messages, *, model="research-primary", **kwargs):
+        raise litellm.AuthenticationError(
+            message="Invalid API key provided", model="gemini/gemini-3.1-flash-lite",
+            llm_provider="gemini",
+        )
+
+
+def _offline_runner(**kwargs):
+    return build_runner(resolve_dns=False, search_fn=fake_search, fetch_fn=fake_fetch)
+
+
+def test_research_path_normalises_provider_failures_into_exhaustion():
+    """Callers were written against one failure mode: every provider failed."""
+    with pytest.raises(AllProvidersExhausted):
+        run_research("How much solar was added in 2023?", RefusingGateway(), _offline_runner())
+
+
+def test_research_cli_reports_the_failure_instead_of_crashing(monkeypatch):
+    from gateway import cli
+
+    printed = io.StringIO()
+    monkeypatch.setattr(cli, "console", Console(file=printed, width=200))
+    monkeypatch.setattr(cli, "build_gateway", lambda settings: RefusingGateway())
+    monkeypatch.setattr(cli, "build_runner", lambda **kwargs: _offline_runner())
+    monkeypatch.setattr(sys, "argv", ["gateway", "research", "How much solar was added?",
+                                      "--no-judge"])
+    assert cli.main() == 1
+    assert "every provider failed" in printed.getvalue()
+
+
+def test_research_endpoint_maps_provider_failures_to_503(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini")
+    from gateway.settings import get_settings
+
+    get_settings.cache_clear()
+    import gateway.api as api
+
+    monkeypatch.setattr(api, "_gateway", RefusingGateway())
+    monkeypatch.setattr(api, "build_runner", lambda **kwargs: _offline_runner())
+    response = TestClient(api.app).post("/research", json={"question": "How much solar was added?"})
+    assert response.status_code == 503

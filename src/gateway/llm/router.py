@@ -78,7 +78,11 @@ def retryable(exc: Exception) -> bool:
                         GenerationRefused, InvalidCompletion)):
         return False
     if isinstance(exc, (EmptyCompletion, IncompleteCompletion, TimeoutError,
-                        litellm.APIConnectionError, litellm.Timeout, litellm.RateLimitError)):
+                        litellm.APIConnectionError, litellm.Timeout, litellm.RateLimitError,
+                        litellm.RouterRateLimitError, litellm.RouterRateLimitErrorBasic)):
+        # Router cooldown errors are ValueErrors carrying no status code: the pinned
+        # deployment has no healthy entries left, which is a provider outage, not a
+        # client error.
         return True
     return getattr(exc, "status_code", None) in (429, 500, 502, 503, 504)
 
@@ -265,11 +269,14 @@ class Gateway:
                     stream = await self.router.acompletion(model=provider, messages=prompt,
                                                           stream=True, **options)
                 terminal, content = None, []
+                stream_deadline = started + self.settings.generation_deadline_s
                 while True:
                     # No cancellation scope crosses yield: a slow consumer must not
                     # receive the producer's cancellation instead of a terminal error.
                     try:
-                        async with asyncio.timeout(attempt_deadline - time.monotonic()):
+                        async with asyncio.timeout(
+                            (stream_deadline if committed else attempt_deadline) - time.monotonic()
+                        ):
                             chunk = await anext(stream)
                     except StopAsyncIteration:
                         break
@@ -318,6 +325,8 @@ class Gateway:
                                 (time.monotonic()-attempt_start)*1000,
                                 error_class=type(exc).__name__))
                 if committed and isinstance(exc, TimeoutError):
+                    if time.monotonic() >= started + self.settings.generation_deadline_s:
+                        raise GenerationDeadline("Generation deadline exceeded") from exc
                     raise IncompleteCompletion("Stream attempt timed out") from exc
                 if committed or not retryable(exc):
                     raise

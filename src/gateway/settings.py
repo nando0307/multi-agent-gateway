@@ -71,7 +71,10 @@ class Settings(BaseSettings):
 
     gateway_service_token: str | None = None
     generation_deadline_s: float = Field(default=60.0, gt=0)
-    generation_attempt_s: float = Field(default=15.0, gt=0)
+    # Sized above the measured primary tail (results/latency.md: gemini p50 ~9.3 s,
+    # p95 ~23 s for a 200-word prompt). A window below the primary's own p95 answers
+    # normal tail latency by abandoning the healthy primary mid-answer.
+    generation_attempt_s: float = Field(default=30.0, gt=0)
 
     ollama_api_base: str = "http://localhost:11434"
     # 4b, not 9b. The 9b variant spends thousands of tokens reasoning before it answers --
