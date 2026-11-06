@@ -94,13 +94,6 @@ async def test_async_path_falls_back_too(messages):
     assert result.fallback_depth == 2
 
 
-def test_retries_are_attempted_before_falling_back(messages):
-    """num_retries>0 must not skip the fallback path when retries are also exhausted."""
-    gw = make_gateway({"gemini": FAIL_500}, num_retries=2)
-    result = gw.complete(messages)
-    assert result.served_by == "nim"
-
-
 def test_empty_completion_is_treated_as_failure_not_success(messages):
     """A 200 with no content is a failure HTTP status cannot see.
 

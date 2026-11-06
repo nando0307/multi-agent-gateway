@@ -45,7 +45,6 @@ def make_settings(**overrides) -> Settings:
         gemini_api_key="test-gemini",
         nvidia_nim_api_key="test-nim",
         openrouter_api_key="test-openrouter",
-        num_retries=0,
         request_timeout_s=5.0,
         cooldown_time_s=60,
         allowed_fails=1,
@@ -90,7 +89,6 @@ def make_gateway(
             "model_info": {"id": f"primary::{chain[0]}", "provider": chain[0], "chain_index": 0},
         }
     )
-    router_kwargs.setdefault("num_retries", 0)
     return Gateway(settings=settings, model_list=entries, **router_kwargs)
 
 

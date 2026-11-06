@@ -1,15 +1,4 @@
-"""Provider inventory and the fallback chain.
-
-The chain order is a *measurement*, not a preference. Phase 1 (`scripts/bench_latency.py`)
-writes `results/latency.md`; this list must match it. The ordering key is p95, not p50 --
-failover is a tail-latency problem, and a provider with a good median and a bad tail makes
-a bad primary.
-
-Ollama is deliberately last: it is local, free, and cannot rate-limit, so the chain always
-terminates in something that works. That is what drives the residual failure rate toward
-zero in Phase 3 -- and, because it is measurably weaker, it is also what makes the silent
-quality regressions in Phase 7 real rather than hypothetical.
-"""
+"""Server-owned provider inventory and approved serving order."""
 
 from __future__ import annotations
 
@@ -21,22 +10,9 @@ if TYPE_CHECKING:
 #: The alias every agent asks for. Agents never name a provider.
 PRIMARY_ALIAS = "research-primary"
 
-#: Fallback order, set from measurement -- see results/latency.md (2026-07-27, n=20 each).
-#: Ordered by p95, not p50: failover is a tail-latency mechanism, so the tail is the
-#: ordering key. OpenRouter (p95 4.6s) is the clear primary; Gemini (23.1s, and the only
-#: provider to fail during the benchmark) sits second.
-#:
-#: Ollama is third, not last. The plan assumed the local tier would terminate the chain by
-#: being slowest -- it is not. At p95 23.6s it beats NIM's 138.3s by ~6x, and its p50/p95
-#: differ by under 400ms against NIM's 114s spread. Chain order does not affect the
-#: residual failure rate (that is P(all fail), which is order-independent), so there was no
-#: availability reason to override the measurement. Caveat: these are serial numbers, and
-#: Ollama is a single local process that will queue under concurrent fan-out.
-#: Ollama was the terminal tier until 2026-07-28. It was replaced by Groq: a synthesis
-#: call took ~214s locally (generation-bound, ~23 tok/s), which made a 30-question x
-#: 4-provider matrix a 6-8 hour run. See PLAN.md for what that cost -- the chain is now
-#: all-cloud, so it no longer terminates in something that cannot rate-limit.
-DEFAULT_CHAIN: tuple[str, ...] = ("openrouter", "gemini", "groq", "nim")
+#: Approved generation destinations; missing credentials disable a tier.
+DEFAULT_CHAIN: tuple[str, ...] = ("gemini", "openrouter", "groq", "deepseek")
+BOSS_ALIASES = ("boss-default", "boss-deep", "boss-graph-map", "boss-graph-reduce")
 
 #: litellm model-string prefixes per provider, used by the judge-independence guard.
 PROVIDER_PREFIXES: dict[str, tuple[str, ...]] = {
@@ -44,6 +20,7 @@ PROVIDER_PREFIXES: dict[str, tuple[str, ...]] = {
     "nim": ("nvidia_nim/",),
     "openrouter": ("openrouter/",),
     "groq": ("groq/",),
+    "deepseek": ("deepseek/",),
     "ollama": ("ollama/", "ollama_chat/"),
 }
 
@@ -85,6 +62,14 @@ def provider_params(name: str, settings: Settings) -> dict[str, Any] | None:
             "model": settings.groq_model,
             "api_key": settings.groq_api_key,
             "timeout": settings.groq_timeout_s,
+        }
+    if name == "deepseek":
+        if not settings.deepseek_api_key:
+            return None
+        return {
+            "model": settings.deepseek_model,
+            "api_key": settings.deepseek_api_key,
+            "timeout": settings.deepseek_timeout_s,
         }
     if name == "ollama":
         # No key required; availability is a liveness question, answered by the smoke test.
@@ -128,7 +113,7 @@ def build_model_list(
     if not effective:
         raise RuntimeError(
             "No providers configured. Set at least one of GEMINI_API_KEY, "
-            "NVIDIA_NIM_API_KEY, OPENROUTER_API_KEY, or run Ollama locally."
+            "OPENROUTER_API_KEY, GROQ_API_KEY or DEEPSEEK_API_KEY."
         )
 
     head = effective[0]

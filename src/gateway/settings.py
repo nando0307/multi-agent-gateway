@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -64,6 +65,14 @@ class Settings(BaseSettings):
     groq_model: str = "groq/llama-3.3-70b-versatile"
     groq_timeout_s: float = 60.0
 
+    deepseek_api_key: str | None = None
+    deepseek_model: str = "deepseek/deepseek-chat"
+    deepseek_timeout_s: float = 15.0
+
+    gateway_service_token: str | None = None
+    generation_deadline_s: float = Field(default=60.0, gt=0)
+    generation_attempt_s: float = Field(default=15.0, gt=0)
+
     ollama_api_base: str = "http://localhost:11434"
     # 4b, not 9b. The 9b variant spends thousands of tokens reasoning before it answers --
     # a single synthesis call ran past 10 minutes, which made the local tier impractical to
@@ -100,13 +109,8 @@ class Settings(BaseSettings):
     judge_model: str = "claude-sonnet-5"
 
     # --- behaviour ---------------------------------------------------------------
-    # Global default, used only by providers without their own. Every timeout below is
-    # ~2x that provider's MEASURED p95 (results/latency.md), floored at 30s. A single
-    # global value cannot serve a 4.6s-p95 provider and a 138s-p95 one: set it low and NIM
-    # fails on its own normal tail, manufacturing failovers that are not real outages; set
-    # it high and a hung primary stalls every request before failover can help.
+    # Provider timeout default; generation attempt and total budgets always cap it.
     request_timeout_s: float = 45.0
-    num_retries: int = 2
     allowed_fails: int = 3
     cooldown_time_s: int = 60
     gate_threshold: float = 0.70

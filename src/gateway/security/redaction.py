@@ -57,6 +57,10 @@ def register_settings(settings: Any) -> None:
         "gemini_api_key",
         "nvidia_nim_api_key",
         "openrouter_api_key",
+        "groq_api_key",
+        "deepseek_api_key",
+        "gateway_service_token",
+        "parallel_api_key",
         "tavily_api_key",
         "judge_api_key",
     ):

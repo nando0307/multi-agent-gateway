@@ -6,6 +6,7 @@ A provider you cannot get working is one you drop, not one you claim.
 
 from __future__ import annotations
 
+import argparse
 import sys
 import time
 from pathlib import Path
@@ -17,13 +18,38 @@ import litellm  # noqa: E402
 
 from gateway.llm.model_list import DEFAULT_CHAIN, provider_params  # noqa: E402
 from gateway.settings import get_settings  # noqa: E402
+from gateway.llm.router import Gateway  # noqa: E402
 
 PROMPT = [{"role": "user", "content": "Reply with the single word: ready"}]
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--generation-only", action="store_true",
+                        help="Probe only approved generation models with synthetic text and schema")
+    args = parser.parse_args()
     settings = get_settings()
     ok = 0
+    if args.generation_only:
+        schema = {"type": "json_schema", "json_schema": {
+            "name": "Readiness", "strict": True,
+            "schema": {"type": "object", "properties": {"ready": {"const": True}},
+                       "required": ["ready"], "additionalProperties": False}}}
+        for name in DEFAULT_CHAIN:
+            params = provider_params(name, settings)
+            if params is None:
+                print(f"{name}: disabled (missing credentials)")
+                continue
+            gateway = Gateway(settings=settings, chain=(name,))
+            try:
+                gateway.complete(PROMPT, model=name, max_tokens=128)
+                gateway.complete([{"role": "user", "content": 'Return JSON {"ready": true}.'}],
+                                 model=name, max_tokens=128, response_format=schema)
+                print(f"{name}: text and validated schema OK ({params['model']})")
+                ok += 1
+            except Exception as exc:
+                print(f"{name}: FAILED ({type(exc).__name__})")
+        return 0 if ok == len(DEFAULT_CHAIN) else 1
 
     print(f"{'provider':<12} {'status':<8} {'latency':>9}  detail")
     print("-" * 68)

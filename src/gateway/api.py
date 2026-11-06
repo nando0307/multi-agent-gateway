@@ -19,6 +19,8 @@ from pydantic import BaseModel, Field
 from gateway.agents.orchestrator import build_runner, run_research
 from gateway.eval.gate import QualityGate
 from gateway.eval.judge import Judge, JudgeUnavailable
+from gateway.generation import generation_router
+from gateway.llm.model_list import DEFAULT_CHAIN
 from gateway.llm.router import AllProvidersExhausted, build_gateway
 from gateway.security.redaction import register_settings
 from gateway.settings import get_settings
@@ -51,6 +53,7 @@ _executor = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_pre
 _settings = get_settings()
 register_settings(_settings)
 _gateway = build_gateway(settings=_settings)
+app.include_router(generation_router(_gateway, _settings))
 try:
     _judge = Judge(_settings)
 except JudgeUnavailable:
@@ -128,6 +131,7 @@ def health() -> dict:
         "status": "ok",
         "providers": list(_gateway.chain),
         "n_providers": len(_gateway.chain),
+        "disabled_providers": {name: "missing credentials" for name in DEFAULT_CHAIN if name not in _gateway.chain},
         "judge_configured": _judge is not None,
         "deployments": cooling,
     }

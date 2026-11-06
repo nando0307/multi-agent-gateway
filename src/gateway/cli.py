@@ -12,6 +12,7 @@ from rich.table import Table
 from gateway.agents.orchestrator import build_runner, run_research
 from gateway.eval.gate import QualityGate
 from gateway.eval.judge import Judge, JudgeUnavailable
+from gateway.llm.model_list import DEFAULT_CHAIN, provider_params
 from gateway.llm.router import AllProvidersExhausted, build_gateway
 from gateway.security.redaction import register_settings
 from gateway.settings import get_settings
@@ -79,16 +80,18 @@ def cmd_serve(args) -> int:
 
 def cmd_providers(args) -> int:
     settings = get_settings()
-    gateway = build_gateway(settings=settings)
+    available = settings.available_providers()
     table = Table(title="Fallback chain")
     table.add_column("#")
     table.add_column("provider")
     table.add_column("model")
-    for i, name in enumerate(gateway.chain):
-        entry = next(e for e in gateway.model_list if e["model_name"] == name)
-        table.add_row(str(i), name, entry["litellm_params"]["model"])
+    table.add_column("status")
+    for i, name in enumerate(DEFAULT_CHAIN):
+        params = provider_params(name, settings)
+        table.add_row(str(i), name, params["model"] if params else "-",
+                      "configured (not probed)" if params else "disabled: missing credentials")
     console.print(table)
-    console.print(f"\nN = {len(gateway.chain)}")
+    console.print(f"\nN = {len(available)} configured")
     return 0
 
 

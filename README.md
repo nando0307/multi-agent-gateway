@@ -1,14 +1,14 @@
 # multi-agent-gateway
 
-A multi-agent web-research system with provider failover, a quality gate on every
-response, and a deterministic prompt-injection defence.
+A generation gateway for Boss Assistant, plus the existing multi-agent web-research
+application. Boss retains retrieval, authorization, citations and embeddings.
 
-Three claims, each backed by a script in this repo that prints the number:
+Historical web-research measurements (not measurements of the new serving chain):
 
 | claim | measured | evidence |
 |---|---|---|
-| Automatic failover across 4 providers, p95-ordered | request failures **31.2% → 0.2%** at a 30% provider-failure rate (n=1000/arm) | [`results/chaos_report.md`](results/chaos_report.md) |
-| Every response scored before it reaches a user | citation / depth / coherence, gate at 0.70 | [`results/provider_matrix.md`](results/provider_matrix.md) |
+| Historical p95-ordered provider failover | request failures **31.2% → 0.2%** at a 30% provider-failure rate (n=1000/arm) | [`results/chaos_report.md`](results/chaos_report.md) |
+| Research responses scored before delivery | citation / depth / coherence, gate at 0.70 | [`results/provider_matrix.md`](results/provider_matrix.md) |
 | Prompt-injection hardening | **100%** of 41 attacks blocked, **0%** false positives on 40 benign passages | [`results/security_report.md`](results/security_report.md) |
 
 Read the [Limitations](#limitations) before quoting any of these.
@@ -33,11 +33,11 @@ LlamaIndex Workflow ── Planner ──► Researcher ──► Synthesizer
  litellm.Router                      ▼
   fallback chain              web_search / fetch_url
   per-provider timeouts
-  retries + cooldown
+  bounded attempts + cooldown
       │
   ┌──────────┴──┬─────────────┬──────────┐
   ▼             ▼             ▼          ▼
-OpenRouter    Gemini      Groq      NVIDIA NIM
+Gemini    OpenRouter      Groq      DeepSeek
       │
       ▼
  QualityGate — score, retry once on another provider, never return a failure silently
@@ -83,12 +83,119 @@ docker run --rm -p 8000:8000 --env-file .env multi-agent-gateway
 # → http://localhost:8000  (web UI)   http://localhost:8000/health
 ```
 
+## Boss generation deployment
+
+The approved serving chain is **Gemini -> OpenRouter -> Groq -> direct DeepSeek**.
+NVIDIA and subscription Codex are not generation fallbacks. Each provider's `*_MODEL`
+and `*_API_KEY` in `.env.example` selects its server-held model and credentials.
+All four Boss aliases currently share this configured chain: `boss-default`,
+`boss-deep`, `boss-graph-map`, `boss-graph-reduce`. Caller model IDs, upstream URLs
+and upstream credentials are not accepted.
+
+1. Set the four provider keys and a separate, randomly generated
+   `GATEWAY_SERVICE_TOKEN`. Do not reuse a user JWT or a provider key.
+2. Run `uv run gateway providers`. Missing keys appear as disabled. This is
+   configuration inventory, not live health. Startup requires at least one provider.
+3. Run `uv run python scripts/smoke_providers.py --generation-only` in the deployment
+   environment. This sends only synthetic text and a tiny JSON schema to each configured
+   provider, with no search, judge, embedding or private-document calls. It exits nonzero
+   for any failed or missing tier. A configured key alone does not establish model access,
+   quota, schema compatibility or permission to send private documents.
+4. Run `uv run gateway serve --host 127.0.0.1 --port 8000` behind an internal TLS
+   reverse proxy/private network. Allow Boss only `POST /v1/chat/completions`.
+   Do **not** expose the legacy `/research`, UI, docs or operational endpoints publicly:
+   those pre-existing surfaces do not use the generation service token.
+5. Configure Boss `GENERATION_BASE_URL=https://gateway.internal/v1`,
+   `GENERATION_API_KEY=<same service token>`, zero client retries and a transport
+   timeout greater than the gateway's total deadline (65 seconds for the default 60).
+   Keep NVIDIA embedding configuration separate; no corpus reindexing is involved.
+
+### Request and output contract
+
+`POST /v1/chat/completions` requires `Authorization: Bearer <GATEWAY_SERVICE_TOKEN>`.
+Unset service token disables generation with 503. Wrong/missing token returns 401.
+The body accepts a Boss alias, a nonempty `messages` array of string `role`/`content`
+pairs, optional `temperature` (0-2), either positive `max_tokens` or
+`max_completion_tokens`, and `stream` (default false). Roles: system, developer, user,
+assistant. Token limits are preserved, with `max_completion_tokens` translated to
+`max_tokens` for the approved adapters. Unknown fields, tools, multimodal content,
+caller routing credentials and unsupported required formats are rejected.
+
+Optional structured output:
+
+```json
+{"response_format":{"type":"json_schema","json_schema":{
+  "name":"RouteQuery","strict":true,"schema":{
+    "type":"object","properties":{"department":{"enum":["hr","finance","both"]}},
+    "required":["department"],"additionalProperties":false
+  }
+}}}
+```
+
+Schemas use JSON Schema 2020-12 with an object root and local JSON-pointer references.
+Remote references, `$id`, dynamic references and other dialects are rejected.
+Native schema mode is used when LiteLLM reports support. Otherwise an adapter must
+support JSON mode: the schema is supplied as a system instruction and its result is
+locally validated against the same schema. This is validated output, not a claim that
+every vendor offers native constrained decoding. Invalid output fails explicitly.
+Structured streams are buffered until validated; ordinary text streams are incremental.
+No `/v1/models` endpoint is needed by the Boss OpenAI adapter.
+
+Non-streaming results are OpenAI `choices[].message` envelopes, with usage where
+supplied, plus `X-Gateway-Provider` and `X-Gateway-Fallback-Depth` headers.
+Streaming results use OpenAI `data:` delta frames, a verified `finish_reason: stop`,
+then `[DONE]`. Output truncation and missing upstream terminal evidence are errors,
+never successful partial answers. Before content, transient failure advances to the
+next provider. After any content, failure emits an OpenAI `error` frame and closes
+without `[DONE]`; consumers must not publish that partial answer as complete.
+No continuation from another model is appended. Caller disconnect cancels upstream
+work at this HTTP boundary; Boss must also close its gateway request on cancellation.
+
+One `GENERATION_DEADLINE_S` wall-clock budget (default 60 seconds) covers the entire
+request. Each provider gets at most `GENERATION_ATTEMPT_S` (default 15 seconds), its
+existing provider-specific timeout, and the remaining total budget, whichever is least.
+There are no nested retries or per-provider full-deadline resets. Connection failures,
+timeouts, 429 and 500/502/503/504 advance to backups; invalid requests, context errors,
+safety refusals, invalid schema output and credential errors do not. Blank completions
+and pre-content incomplete streams also advance. All-blank exhaustion is 503.
+Lower timeouts can manufacture failover under normal provider latency; tune with
+synthetic probes. Four enabled providers are not four independent infrastructure paths.
+
+Errors never include upstream response bodies, credentials or prompt contents:
+
+| HTTP | `error.code` | Meaning |
+|---|---|---|
+| 400 | `invalid_request` | Unsupported/invalid input or schema |
+| 400 | `generation_refused` | Provider safety refusal; no fallback |
+| 401 | `authentication_error` | Invalid service Bearer token |
+| 502 | `provider_configuration` | Upstream credential/permission error |
+| 502 | `invalid_completion` | Output failed required schema |
+| 502 | `stream_interrupted` | Truncated or interrupted answer |
+| 502 | `generation_failed` | Other non-retryable provider failure |
+| 503 | `providers_exhausted` | All available approved tiers failed |
+| 503 | `service_unavailable` | Service token not configured |
+| 504 | `generation_deadline` | Shared total budget expired |
+
+After SSE headers, these errors are data frames rather than new HTTP statuses.
+LiteLLM is pinned because its 1.93 stream wrapper otherwise synthesizes success on
+premature EOF and can continue another model's answer even with fallbacks disabled.
+The small Router override preserves its provider adapters while enforcing this contract.
+Run `uv run pytest tests/test_generation_http.py` before upgrading LiteLLM.
+That regression file exercises real loopback HTTP faults, including cancellation,
+schema validation, sync/async blank consistency, streaming EOF and token preservation.
+
+Approve data processing with **every** enabled provider before routing private RAG
+context. Embeddings, business-action tools, autonomous execution and public-web
+research orchestration are outside this generation endpoint. Provider failover does
+not make the gateway process, network, retriever or vector store highly available.
+
+
 ## Reproducing the numbers
 
 ```bash
-uv run pytest                              # 111 tests, fully offline, no keys needed
+uv run pytest                              # offline, no provider keys needed
 uv run python scripts/smoke_providers.py   # what N actually is
-uv run python scripts/bench_latency.py     # → results/latency.md, sets the chain order
+uv run python scripts/bench_latency.py     # benchmarks, does not change approved routing order
 uv run python scripts/chaos_run.py --n 1000 --p 0.1 0.3 0.5   # → results/chaos_report.md
 uv run python scripts/eval_injection.py    # → results/security_report.md
 uv run python scripts/run_eval.py          # → results/provider_matrix.md (needs keys + judge)
@@ -137,15 +244,12 @@ bash scripts/run_garak.sh                  # model-level probes against the runn
   relative to the primary, so a question the primary failed yields no verdict either way.
   OpenRouter passed 15 of 30, so the 11 regressions are counted across 15 comparable
   questions, not 30. The report says so rather than printing a bare count.
-- **The primary is not the strongest provider.** The chain is p95-latency-ordered, which puts
-  OpenRouter (mean composite 0.688, 50% pass) ahead of Gemini (0.758, 73.3%). That is the
-  documented cost of optimising for tail latency, not an oversight — but it does mean the
-  best provider only serves when the fastest one fails. The 0.02 gap to NVIDIA NIM is inside
-  the judge's ±0.08 noise band; the 0.07 gap to Gemini is probably not.
-- **N = 4, not 5.** Azure OpenAI was planned and dropped for lack of access. Four providers
-  — OpenRouter, Gemini, Groq and NVIDIA NIM, four independent cloud vendors — is the honest
-  count. It was three cloud vendors plus a local Ollama tier until 2026-07-28; see the next
-  bullet for what that swap cost.
+- **The historical primary was not the strongest provider.** The old p95 ordering put
+  OpenRouter (mean composite 0.688, 50% pass) ahead of Gemini (0.758, 73.3%). Those
+  measurements do not rank the current Gemini-first serving chain.
+- **The historical matrix used OpenRouter, Gemini, Groq and NVIDIA NIM.** Current serving
+  uses Gemini, OpenRouter, Groq and direct DeepSeek. Its effective provider count is the
+  number of configured keys, and live availability requires the deployment probe.
 - **The chain no longer terminates in something that cannot rate-limit.** Ollama held that
   role until it proved too slow to evaluate (~214s per synthesis, generation-bound) and was
   replaced by Groq. All four tiers are now cloud providers, so a correlated outage would

@@ -1317,6 +1317,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "jsonschema" },
     { name = "litellm" },
     { name = "llama-index-core" },
     { name = "pydantic-settings" },
@@ -1342,7 +1343,8 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.140.0" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "litellm", specifier = ">=1.93.0" },
+    { name = "jsonschema", specifier = ">=4.26.0" },
+    { name = "litellm", specifier = "==1.93.0" },
     { name = "llama-index-core", specifier = ">=0.14.23" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "pytest", specifier = ">=9.1.1" },

@@ -1,292 +1,275 @@
-"""The gateway: one provider-agnostic, self-healing call site.
-
-Design note (PLAN.md D1): this is an in-process ``litellm.Router``, not the LiteLLM proxy
-server. The proxy is the easier path but makes fallback events invisible to the test
-suite -- observable only through logs. In-process, `tests/test_failover.py` can assert
-exactly which provider served each request and at what depth, which is the entire point
-of the failover claim.
-"""
-
+"""Bounded generation over LiteLLM's provider adapters and deployment Router."""
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import time
 import uuid
 from typing import Any
 
 import litellm
+from jsonschema import Draft202012Validator, ValidationError
 from litellm import Router
-from litellm.integrations.custom_logger import CustomLogger
 
 from gateway.llm.events import LLMAttempt, LLMCallRecord, get_trace
-from gateway.llm.model_list import PRIMARY_ALIAS, build_model_list
+from gateway.llm.model_list import BOSS_ALIASES, PRIMARY_ALIAS, build_model_list
 from gateway.settings import Settings, get_settings
 
-litellm.drop_params = True
+litellm.drop_params = False
 litellm.suppress_debug_info = True
-# LiteLLM logs a full traceback for every deployment failure. During failover those are
-# expected events, not errors -- they belong on the RunTrace, not on stderr.
 logging.getLogger("LiteLLM").setLevel(logging.CRITICAL)
 logging.getLogger("LiteLLM Router").setLevel(logging.CRITICAL)
 
 
 class EmptyCompletion(RuntimeError):
-    """A provider returned success with no content.
+    """No usable content from an otherwise successful provider response."""
 
-    This is a failure that HTTP status cannot see: 200 OK, no exception, zero words. It
-    was observed for real -- a reasoning model overran its context window and spent the
-    entire budget thinking. Treating it as success let blank reports through to scoring,
-    where they registered as merely poor rather than broken.
-    """
+
+class IncompleteCompletion(RuntimeError):
+    """Missing terminal marker or output budget exhausted."""
+
+
+class InvalidCompletion(RuntimeError):
+    """Provider output does not satisfy the requested schema."""
+
+
+class GenerationRefused(RuntimeError):
+    """Safety refusal; never replay against another provider."""
+
+
+class GenerationDeadline(TimeoutError):
+    """The shared generation deadline expired."""
 
 
 class AllProvidersExhausted(RuntimeError):
-    """Every provider in the chain failed. Raised cleanly -- never hang."""
-
-    def __init__(self, alias: str, attempts: list[LLMAttempt], cause: BaseException | None = None):
+    def __init__(self, alias, attempts, cause=None):
         self.alias = alias
         self.attempts = attempts
         self.__cause__ = cause
-        tried = ", ".join(f"{a.provider}:{a.error_class}" for a in attempts) or "none recorded"
-        super().__init__(f"all providers exhausted for {alias!r} (tried: {tried})")
+        super().__init__(f"all providers exhausted for {alias!r}")
 
 
-class _AttemptRecorder(CustomLogger):
-    """Captures per-deployment failures that the Router swallows while falling back.
+def retryable(exc: Exception) -> bool:
+    # Normalized safety/input errors win over an ambiguous upstream HTTP status.
+    if isinstance(exc, (litellm.BadRequestError, litellm.ContentPolicyViolationError,
+                        litellm.AuthenticationError, litellm.PermissionDeniedError,
+                        GenerationRefused, InvalidCompletion)):
+        return False
+    if isinstance(exc, (EmptyCompletion, IncompleteCompletion, TimeoutError,
+                        litellm.APIConnectionError, litellm.Timeout, litellm.RateLimitError)):
+        return True
+    return getattr(exc, "status_code", None) in (429, 500, 502, 503, 504)
 
-    Registered once, globally. Writes into whichever ``CallResult`` collector is active
-    on this context, so concurrent researcher tasks don't cross-contaminate.
-    """
 
-    def log_failure_event(self, kwargs, response_obj, start_time, end_time):
-        self._record(kwargs, start_time, end_time)
-
-    async def async_log_failure_event(self, kwargs, response_obj, start_time, end_time):
-        self._record(kwargs, start_time, end_time)
-
-    @staticmethod
-    def _record(kwargs, start_time, end_time):
-        sink = _ATTEMPT_SINK.get()
-        if sink is None:
-            return
-        info = (kwargs.get("litellm_params") or {}).get("model_info") or {}
-        exc = kwargs.get("exception")
+def validate_content(text: str, response_format: dict | None) -> None:
+    if response_format and response_format.get("type") == "json_schema":
         try:
-            latency = (end_time - start_time).total_seconds() * 1000
-        except (TypeError, AttributeError):
-            latency = 0.0
-        sink.append(
-            LLMAttempt(
-                attempt_idx=len(sink),
-                provider=info.get("provider") or kwargs.get("model"),
-                served=False,
-                latency_ms=round(latency, 1),
-                error_class=type(exc).__name__ if exc else "UnknownError",
-                error_message=str(exc)[:300] if exc else None,
-            )
-        )
-
-
-from contextvars import ContextVar  # noqa: E402  (kept next to its only consumer)
-
-_ATTEMPT_SINK: ContextVar[list[LLMAttempt] | None] = ContextVar("gateway_attempts", default=None)
-
-_recorder = _AttemptRecorder()
-if not any(isinstance(cb, _AttemptRecorder) for cb in litellm.callbacks):
-    litellm.callbacks.append(_recorder)
+            value = json.loads(text)
+            Draft202012Validator(response_format["json_schema"]["schema"]).validate(value)
+        except (ValueError, ValidationError) as exc:
+            raise InvalidCompletion("Provider returned invalid structured output") from exc
 
 
 class CallResult:
     __slots__ = ("text", "served_by", "fallback_depth", "attempts", "latency_ms", "raw", "usage")
 
     def __init__(self, text, served_by, fallback_depth, attempts, latency_ms, raw, usage):
-        self.text = text
-        self.served_by = served_by
-        self.fallback_depth = fallback_depth
-        self.attempts = attempts
-        self.latency_ms = latency_ms
-        self.raw = raw
-        self.usage = usage
+        self.text, self.served_by, self.fallback_depth = text, served_by, fallback_depth
+        self.attempts, self.latency_ms, self.raw, self.usage = attempts, latency_ms, raw, usage
 
-    def __repr__(self) -> str:
-        return (
-            f"CallResult(served_by={self.served_by!r}, depth={self.fallback_depth}, "
-            f"latency_ms={self.latency_ms:.0f})"
-        )
+
+class _GenerationRouter(Router):
+    async def _acompletion_streaming_iterator(self, model_response, messages, initial_kwargs):
+        # LiteLLM 1.93 wraps streams with continuation fallback even when
+        # disable_fallbacks=True. Keep its adapters, but never splice model answers.
+        return model_response
 
 
 class Gateway:
-    """Provider-agnostic completion with measured failover."""
+    """One ordered attempt per approved provider, sharing one wall-clock deadline."""
 
-    def __init__(
-        self,
-        settings: Settings | None = None,
-        chain: tuple[str, ...] | None = None,
-        model_list: list[dict[str, Any]] | None = None,
-        **router_kwargs: Any,
-    ):
+    def __init__(self, settings: Settings | None = None, chain=None, model_list=None, **router_kwargs):
         self.settings = settings or get_settings()
-        if model_list is not None:
-            self.model_list = model_list
-            self.chain = tuple(
-                e["model_info"]["provider"]
-                for e in model_list
-                if e["model_name"] != PRIMARY_ALIAS
-            )
-        else:
+        if model_list is None:
             self.model_list, self.chain = build_model_list(self.settings, chain)
-
-        defaults: dict[str, Any] = dict(
-            model_list=self.model_list,
-            fallbacks=[{PRIMARY_ALIAS: list(self.chain[1:])}] if len(self.chain) > 1 else [],
-            num_retries=self.settings.num_retries,
-            timeout=self.settings.request_timeout_s,
-            allowed_fails=self.settings.allowed_fails,
-            cooldown_time=self.settings.cooldown_time_s,
-            routing_strategy="latency-based-routing",
-            set_verbose=False,
-        )
+        else:
+            self.model_list = model_list
+            self.chain = tuple(e["model_info"]["provider"] for e in model_list
+                               if e["model_name"] != PRIMARY_ALIAS)
+        defaults = dict(model_list=self.model_list, num_retries=0,
+                        fallbacks=[{PRIMARY_ALIAS: list(self.chain[1:])}],
+                        timeout=self.settings.request_timeout_s,
+                        allowed_fails=self.settings.allowed_fails,
+                        cooldown_time=self.settings.cooldown_time_s,
+                        routing_strategy="simple-shuffle", set_verbose=False)
         defaults.update(router_kwargs)
-        self.router = Router(**defaults)
+        # The wrapper owns the budget and retry classification. No nested retry ladder.
+        defaults["num_retries"] = 0
+        self.router = _GenerationRouter(**defaults)
 
-    # -- provider resolution ------------------------------------------------------
-    def _resolve_provider(self, response: Any) -> str | None:
-        hidden = getattr(response, "_hidden_params", None) or {}
-        model_id = hidden.get("model_id")
-        if isinstance(model_id, str):
-            if model_id.startswith("primary::"):
-                return model_id.split("::", 1)[1]
-            if model_id in self.chain:
-                return model_id
-        model = getattr(response, "model", None) or ""
-        for entry in self.model_list:
-            target = entry["litellm_params"]["model"]
-            if model and (model in target or target.endswith(model)):
-                return entry["model_info"]["provider"]
-        return None
+    def _providers(self, model):
+        if model in (PRIMARY_ALIAS, *BOSS_ALIASES):
+            return self.chain if self.router.fallbacks else self.chain[:1]
+        if model not in self.chain:
+            raise ValueError("Unknown model alias")
+        return (model,)
 
-    def _depth(self, provider: str | None) -> int:
-        if provider is None or provider not in self.chain:
-            return 0
-        return self.chain.index(provider)
+    def _options(self, provider, messages, kwargs, remaining):
+        entry = next(e for e in self.model_list if e["model_name"] == provider)
+        params = entry["litellm_params"]
+        options = dict(kwargs)
+        response_format = options.get("response_format")
+        if response_format and response_format.get("type") == "json_schema":
+            target = params["model"]
+            if not litellm.supports_response_schema(model=target):
+                supported = litellm.get_supported_openai_params(model=target) or []
+                if "response_format" not in supported:
+                    raise ValueError("Configured model does not support required JSON output")
+                # JSON-mode providers still must pass the exact local schema validator.
+                messages = [{"role": "system", "content": "Return only JSON matching this schema: "
+                             + json.dumps(response_format["json_schema"]["schema"])}, *messages]
+                options["response_format"] = {"type": "json_object"}
+        timeout = min(remaining, self.settings.generation_attempt_s,
+                      params.get("timeout", self.settings.request_timeout_s))
+        options.update(timeout=timeout, num_retries=0, max_retries=0,
+                       disable_fallbacks=True, drop_params=False)
+        return messages, options, timeout
 
-    # -- public API ---------------------------------------------------------------
-    def complete(
-        self,
-        messages: list[dict[str, str]],
-        *,
-        model: str = PRIMARY_ALIAS,
-        **kwargs: Any,
-    ) -> CallResult:
-        attempts: list[LLMAttempt] = []
-        token = _ATTEMPT_SINK.set(attempts)
-        started = time.perf_counter()
-        call_id = uuid.uuid4().hex[:8]
+    def complete(self, messages, *, model=PRIMARY_ALIAS, **kwargs):
+        """Blocking facade; async callers must use acomplete/astream."""
+        return asyncio.run(self.acomplete(messages, model=model, **kwargs))
+
+    async def acomplete(self, messages, *, model=PRIMARY_ALIAS, **kwargs):
+        if kwargs.pop("stream", False):
+            raise ValueError("Use astream for streaming generation")
+        started, call_id, attempts = time.monotonic(), uuid.uuid4().hex[:8], []
+        cause = None
         try:
-            response = self.router.completion(model=model, messages=messages, **kwargs)
+            async with asyncio.timeout(self.settings.generation_deadline_s):
+                for provider in self._providers(model):
+                    attempt_start = time.monotonic()
+                    remaining = self.settings.generation_deadline_s - (attempt_start - started)
+                    try:
+                        prompt, options, timeout = self._options(provider, messages, kwargs, remaining)
+                        async with asyncio.timeout(timeout):
+                            response = await self.router.acompletion(model=provider, messages=prompt, **options)
+                        choice = response.choices[0]
+                        if choice.finish_reason == "content_filter" or getattr(choice.message, "refusal", None):
+                            raise GenerationRefused("Provider refused generation")
+                        if choice.finish_reason not in ("stop", "tool_calls", "function_call"):
+                            raise IncompleteCompletion("Provider did not complete the answer")
+                        text = choice.message.content or ""
+                        if not text.strip() and not getattr(choice.message, "tool_calls", None):
+                            raise EmptyCompletion("Provider returned no content")
+                        validate_content(text, kwargs.get("response_format"))
+                    except Exception as exc:
+                        cause = exc
+                        attempts.append(LLMAttempt(len(attempts), provider, False,
+                                        (time.monotonic() - attempt_start) * 1000,
+                                        error_class=type(exc).__name__))
+                        if not retryable(exc):
+                            raise
+                        continue
+                    elapsed = (time.monotonic() - started) * 1000
+                    attempts.append(LLMAttempt(len(attempts), provider, True,
+                                    (time.monotonic() - attempt_start) * 1000))
+                    depth = self.chain.index(provider)
+                    self._record_call(call_id, model, provider, depth, elapsed, attempts, usage=response.usage)
+                    return CallResult(text, provider, depth, attempts, elapsed, response, response.usage)
+                raise AllProvidersExhausted(model, attempts, cause) from cause
+        except TimeoutError as exc:
+            self._record_call(call_id, model, None, 0, (time.monotonic()-started)*1000,
+                              attempts, error="GenerationDeadline")
+            raise GenerationDeadline("Generation deadline exceeded") from exc
         except Exception as exc:
-            elapsed = (time.perf_counter() - started) * 1000
-            self._record_call(call_id, model, None, 0, elapsed, attempts, error=repr(exc))
-            raise AllProvidersExhausted(model, attempts, cause=exc) from exc
-        finally:
-            _ATTEMPT_SINK.reset(token)
+            self._record_call(call_id, model, None, 0, (time.monotonic()-started)*1000,
+                              attempts, error=type(exc).__name__)
+            raise
 
-        elapsed = (time.perf_counter() - started) * 1000
-        provider = self._resolve_provider(response)
-        depth = self._depth(provider)
-
-        text = response.choices[0].message.content or ""
-        if not text.strip():
-            attempts.append(
-                LLMAttempt(len(attempts), provider, False, round(elapsed, 1),
-                           error_class="EmptyCompletion",
-                           error_message="provider returned 200 with no content")
-            )
-            self._record_call(call_id, model, provider, depth, elapsed, attempts,
-                              error="EmptyCompletion")
-            remaining = [p for p in self.chain[self._depth(provider) + 1:]]
-            if not remaining:
-                raise EmptyCompletion(f"{provider} returned an empty completion, chain exhausted")
-            return self.complete(messages, model=remaining[0], **kwargs)
-
-        attempts.append(
-            LLMAttempt(
-                attempt_idx=len(attempts),
-                provider=provider,
-                served=True,
-                latency_ms=round(elapsed, 1),
-            )
-        )
-        usage = getattr(response, "usage", None)
-        self._record_call(
-            call_id, model, provider, depth, elapsed, attempts, response=response, usage=usage
-        )
-        return CallResult(
-            text=text,
-            served_by=provider,
-            fallback_depth=depth,
-            attempts=attempts,
-            latency_ms=elapsed,
-            raw=response,
-            usage=usage,
-        )
-
-    async def acomplete(
-        self, messages: list[dict[str, str]], *, model: str = PRIMARY_ALIAS, **kwargs: Any
-    ) -> CallResult:
-        attempts: list[LLMAttempt] = []
-        token = _ATTEMPT_SINK.set(attempts)
-        started = time.perf_counter()
-        call_id = uuid.uuid4().hex[:8]
+    async def astream(self, messages, *, model=PRIMARY_ALIAS, **kwargs):
+        started = time.monotonic()
+        attempts, cause = [], None
+        committed = False
         try:
-            response = await self.router.acompletion(model=model, messages=messages, **kwargs)
-        except Exception as exc:
-            elapsed = (time.perf_counter() - started) * 1000
-            self._record_call(call_id, model, None, 0, elapsed, attempts, error=repr(exc))
-            raise AllProvidersExhausted(model, attempts, cause=exc) from exc
-        finally:
-            _ATTEMPT_SINK.reset(token)
-
-        elapsed = (time.perf_counter() - started) * 1000
-        provider = self._resolve_provider(response)
-        depth = self._depth(provider)
-        attempts.append(
-            LLMAttempt(len(attempts), provider, True, round(elapsed, 1))
-        )
-        usage = getattr(response, "usage", None)
-        self._record_call(
-            call_id, model, provider, depth, elapsed, attempts, response=response, usage=usage
-        )
-        return CallResult(
-            text=response.choices[0].message.content or "",
-            served_by=provider,
-            fallback_depth=depth,
-            attempts=attempts,
-            latency_ms=elapsed,
-            raw=response,
-            usage=usage,
-        )
+            async with asyncio.timeout(self.settings.generation_deadline_s):
+                for provider in self._providers(model):
+                    stream = None
+                    attempt_start = time.monotonic()
+                    remaining = self.settings.generation_deadline_s - (attempt_start - started)
+                    try:
+                        prompt, options, timeout = self._options(provider, messages, kwargs, remaining)
+                        async with asyncio.timeout(timeout):
+                            stream = await self.router.acompletion(model=provider, messages=prompt,
+                                                                  stream=True, **options)
+                            terminal, content = None, []
+                            async for chunk in stream:
+                                if not chunk.choices:
+                                    continue
+                                choice = chunk.choices[0]
+                                if getattr(choice.delta, "refusal", None) or choice.finish_reason == "content_filter":
+                                    raise GenerationRefused("Provider refused generation")
+                                if getattr(choice.delta, "tool_calls", None):
+                                    raise InvalidCompletion("Tool output is unsupported on this stream")
+                                if choice.finish_reason:
+                                    # LiteLLM synthesizes stop on clean EOF. Require evidence from the adapter.
+                                    if not getattr(stream, "received_finish_reason", None):
+                                        raise IncompleteCompletion("Upstream stream ended without a terminal marker")
+                                    if choice.finish_reason != "stop":
+                                        raise IncompleteCompletion("Provider did not complete the answer")
+                                    terminal = chunk.model_copy(deep=True)
+                                    terminal.choices[0].delta.content = None
+                                    choice.finish_reason = None
+                                text = choice.delta.content or ""
+                                if text:
+                                    content.append(text)
+                                if kwargs.get("response_format"):
+                                    # Structured responses are atomic: validate before exposing any JSON.
+                                    continue
+                                if text:
+                                    committed = True
+                                    yield chunk
+                            if terminal is None:
+                                raise IncompleteCompletion("Upstream stream ended without a terminal marker")
+                            text = "".join(content)
+                            if not text.strip():
+                                raise EmptyCompletion("Provider returned no content")
+                            validate_content(text, kwargs.get("response_format"))
+                            if kwargs.get("response_format"):
+                                chunk = terminal.model_copy(deep=True)
+                                chunk.choices[0].delta.content = text
+                                chunk.choices[0].finish_reason = None
+                                committed = True
+                                yield chunk
+                                yield terminal
+                            else:
+                                yield terminal
+                            return
+                    except Exception as exc:
+                        cause = exc
+                        attempts.append(LLMAttempt(len(attempts), provider, False,
+                                        (time.monotonic()-attempt_start)*1000,
+                                        error_class=type(exc).__name__))
+                        if committed and isinstance(exc, TimeoutError):
+                            raise IncompleteCompletion("Stream attempt timed out") from exc
+                        if committed or not retryable(exc):
+                            raise
+                    finally:
+                        if stream is not None:
+                            await stream.aclose()
+                raise AllProvidersExhausted(model, attempts, cause) from cause
+        except TimeoutError as exc:
+            raise GenerationDeadline("Generation deadline exceeded") from exc
 
     @staticmethod
-    def _record_call(
-        call_id, alias, provider, depth, elapsed, attempts, response=None, usage=None, error=None
-    ) -> None:
+    def _record_call(call_id, alias, provider, depth, elapsed, attempts, response=None, usage=None, error=None):
         trace = get_trace()
-        if trace is None:
-            return
-        trace.llm_calls.append(
-            LLMCallRecord(
-                call_id=call_id,
-                alias=alias,
-                served_by=provider,
-                fallback_depth=depth,
-                latency_ms=round(elapsed, 1),
-                attempts=list(attempts),
+        if trace is not None:
+            trace.llm_calls.append(LLMCallRecord(
+                call_id=call_id, alias=alias, served_by=provider, fallback_depth=depth,
+                latency_ms=round(elapsed, 1), attempts=list(attempts),
                 prompt_tokens=getattr(usage, "prompt_tokens", None),
-                completion_tokens=getattr(usage, "completion_tokens", None),
-                error=error,
-            )
-        )
+                completion_tokens=getattr(usage, "completion_tokens", None), error=error))
 
 
 def build_gateway(**kwargs: Any) -> Gateway:
