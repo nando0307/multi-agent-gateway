@@ -6,6 +6,12 @@ lives in `scripts/chaos_run.py`; this file is what proves the mechanism works at
 """
 
 from __future__ import annotations
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
+
+import litellm
+from litellm.integrations.custom_logger import CustomLogger
 
 import pytest
 
@@ -121,3 +127,29 @@ def test_empty_completion_is_recorded_on_the_trace(messages):
         gw.complete(messages)
     classes = [a.error_class for c in trace.llm_calls for a in c.attempts]
     assert "EmptyCompletion" in classes
+
+
+def test_concurrent_sync_async_calls_deliver_their_success_callbacks():
+    """Short-lived caller loops must not discard LiteLLM's queued callbacks."""
+    delivered = Queue()
+
+    class Recorder(CustomLogger):
+        async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):
+            delivered.put(kwargs["messages"][0]["content"])
+
+    recorder = Recorder()
+    litellm.callbacks.append(recorder)
+    gateway = make_gateway()
+    try:
+        def call(label, asynchronous):
+            messages = [{"role": "user", "content": label}]
+            if asynchronous:
+                return asyncio.run(gateway.acomplete(messages))
+            return gateway.complete(messages)
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = [pool.submit(call, f"callback-{index}", bool(index % 2)) for index in range(4)]
+            assert all(result.result(timeout=5).served_by == "gemini" for result in results)
+        assert {delivered.get(timeout=5) for _ in results} == {f"callback-{index}" for index in range(4)}
+    finally:
+        litellm.callbacks.remove(recorder)

@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     openrouter_model: str = "openrouter/mistralai/mistral-small-3.2-24b-instruct"
 
     groq_api_key: str | None = None
-    groq_model: str = "groq/llama-3.3-70b-versatile"
+    groq_model: str = "groq/openai/gpt-oss-120b"
     groq_timeout_s: float = 60.0
 
     deepseek_api_key: str | None = None

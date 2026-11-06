@@ -1,14 +1,19 @@
 """Bounded generation over LiteLLM's provider adapters and deployment Router."""
 from __future__ import annotations
 
+import atexit
 import asyncio
 import json
 import logging
+import threading
 import time
 import uuid
+from contextlib import ExitStack, aclosing
+from functools import partial
 from typing import Any
 
 import litellm
+from anyio.from_thread import start_blocking_portal
 from jsonschema import Draft202012Validator, ValidationError
 from litellm import Router
 
@@ -20,6 +25,22 @@ litellm.drop_params = False
 litellm.suppress_debug_info = True
 logging.getLogger("LiteLLM").setLevel(logging.CRITICAL)
 logging.getLogger("LiteLLM Router").setLevel(logging.CRITICAL)
+
+# LiteLLM owns a process-wide async logging worker and cached HTTP clients.
+# Keep their loop alive across sync callers and ASGI requests, rather than losing
+# queued callbacks whenever a per-call asyncio.run() closes its loop.
+_portal_stack = ExitStack()
+_portal_lock = threading.Lock()
+_portal = None
+atexit.register(_portal_stack.close)
+
+
+def _completion_portal():
+    global _portal
+    with _portal_lock:
+        if _portal is None:
+            _portal = _portal_stack.enter_context(start_blocking_portal(name="gateway-generation"))
+        return _portal
 
 
 class EmptyCompletion(RuntimeError):
@@ -138,9 +159,20 @@ class Gateway:
 
     def complete(self, messages, *, model=PRIMARY_ALIAS, **kwargs):
         """Blocking facade; async callers must use acomplete/astream."""
-        return asyncio.run(self.acomplete(messages, model=model, **kwargs))
+        future = _completion_portal().start_task_soon(partial(self._acomplete, messages, model=model, **kwargs))
+        try:
+            return future.result()
+        finally:
+            future.cancel()
 
     async def acomplete(self, messages, *, model=PRIMARY_ALIAS, **kwargs):
+        future = _completion_portal().start_task_soon(partial(self._acomplete, messages, model=model, **kwargs))
+        try:
+            return await asyncio.wrap_future(future)
+        finally:
+            future.cancel()
+
+    async def _acomplete(self, messages, *, model=PRIMARY_ALIAS, **kwargs):
         if kwargs.pop("stream", False):
             raise ValueError("Use astream for streaming generation")
         started, call_id, attempts = time.monotonic(), uuid.uuid4().hex[:8], []
@@ -188,78 +220,111 @@ class Gateway:
             raise
 
     async def astream(self, messages, *, model=PRIMARY_ALIAS, **kwargs):
+        # One buffered chunk provides backpressure without moving provider clients
+        # between loops. Cancelling the consumer cancels the producer's AnyIO scope.
+        loop = asyncio.get_running_loop()
+        queue = asyncio.Queue(maxsize=1)
+
+        async def send(item):
+            await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(queue.put(item), loop))
+
+        async def produce():
+            try:
+                async with asyncio.timeout(self.settings.generation_deadline_s):
+                    async with aclosing(self._astream(messages, model=model, **kwargs)) as stream:
+                        async for chunk in stream:
+                            await send(chunk)
+            except TimeoutError:
+                await send(GenerationDeadline("Generation deadline exceeded"))
+            except Exception as exc:
+                await send(exc)
+            else:
+                await send(None)
+
+        future = _completion_portal().start_task_soon(produce)
+        try:
+            while (item := await queue.get()) is not None:
+                if isinstance(item, Exception):
+                    raise item
+                yield item
+        finally:
+            future.cancel()
+
+    async def _astream(self, messages, *, model=PRIMARY_ALIAS, **kwargs):
         started = time.monotonic()
         attempts, cause = [], None
         committed = False
-        try:
-            async with asyncio.timeout(self.settings.generation_deadline_s):
-                for provider in self._providers(model):
-                    stream = None
-                    attempt_start = time.monotonic()
-                    remaining = self.settings.generation_deadline_s - (attempt_start - started)
+        for provider in self._providers(model):
+            stream = None
+            attempt_start = time.monotonic()
+            remaining = self.settings.generation_deadline_s - (attempt_start - started)
+            try:
+                prompt, options, timeout = self._options(provider, messages, kwargs, remaining)
+                attempt_deadline = time.monotonic() + timeout
+                async with asyncio.timeout(timeout):
+                    stream = await self.router.acompletion(model=provider, messages=prompt,
+                                                          stream=True, **options)
+                terminal, content = None, []
+                while True:
+                    # No cancellation scope crosses yield: a slow consumer must not
+                    # receive the producer's cancellation instead of a terminal error.
                     try:
-                        prompt, options, timeout = self._options(provider, messages, kwargs, remaining)
-                        async with asyncio.timeout(timeout):
-                            stream = await self.router.acompletion(model=provider, messages=prompt,
-                                                                  stream=True, **options)
-                            terminal, content = None, []
-                            async for chunk in stream:
-                                if not chunk.choices:
-                                    continue
-                                choice = chunk.choices[0]
-                                if getattr(choice.delta, "refusal", None) or choice.finish_reason == "content_filter":
-                                    raise GenerationRefused("Provider refused generation")
-                                if getattr(choice.delta, "tool_calls", None):
-                                    raise InvalidCompletion("Tool output is unsupported on this stream")
-                                if choice.finish_reason:
-                                    # LiteLLM synthesizes stop on clean EOF. Require evidence from the adapter.
-                                    if not getattr(stream, "received_finish_reason", None):
-                                        raise IncompleteCompletion("Upstream stream ended without a terminal marker")
-                                    if choice.finish_reason != "stop":
-                                        raise IncompleteCompletion("Provider did not complete the answer")
-                                    terminal = chunk.model_copy(deep=True)
-                                    terminal.choices[0].delta.content = None
-                                    choice.finish_reason = None
-                                text = choice.delta.content or ""
-                                if text:
-                                    content.append(text)
-                                if kwargs.get("response_format"):
-                                    # Structured responses are atomic: validate before exposing any JSON.
-                                    continue
-                                if text:
-                                    committed = True
-                                    yield chunk
-                            if terminal is None:
-                                raise IncompleteCompletion("Upstream stream ended without a terminal marker")
-                            text = "".join(content)
-                            if not text.strip():
-                                raise EmptyCompletion("Provider returned no content")
-                            validate_content(text, kwargs.get("response_format"))
-                            if kwargs.get("response_format"):
-                                chunk = terminal.model_copy(deep=True)
-                                chunk.choices[0].delta.content = text
-                                chunk.choices[0].finish_reason = None
-                                committed = True
-                                yield chunk
-                                yield terminal
-                            else:
-                                yield terminal
-                            return
-                    except Exception as exc:
-                        cause = exc
-                        attempts.append(LLMAttempt(len(attempts), provider, False,
-                                        (time.monotonic()-attempt_start)*1000,
-                                        error_class=type(exc).__name__))
-                        if committed and isinstance(exc, TimeoutError):
-                            raise IncompleteCompletion("Stream attempt timed out") from exc
-                        if committed or not retryable(exc):
-                            raise
-                    finally:
-                        if stream is not None:
-                            await stream.aclose()
-                raise AllProvidersExhausted(model, attempts, cause) from cause
-        except TimeoutError as exc:
-            raise GenerationDeadline("Generation deadline exceeded") from exc
+                        async with asyncio.timeout(attempt_deadline - time.monotonic()):
+                            chunk = await anext(stream)
+                    except StopAsyncIteration:
+                        break
+                    if not chunk.choices:
+                        continue
+                    choice = chunk.choices[0]
+                    if getattr(choice.delta, "refusal", None) or choice.finish_reason == "content_filter":
+                        raise GenerationRefused("Provider refused generation")
+                    if getattr(choice.delta, "tool_calls", None):
+                        raise InvalidCompletion("Tool output is unsupported on this stream")
+                    if choice.finish_reason:
+                        # LiteLLM synthesizes stop on clean EOF. Require adapter evidence.
+                        if not getattr(stream, "received_finish_reason", None):
+                            raise IncompleteCompletion("Upstream stream ended without a terminal marker")
+                        if choice.finish_reason != "stop":
+                            raise IncompleteCompletion("Provider did not complete the answer")
+                        terminal = chunk.model_copy(deep=True)
+                        terminal.choices[0].delta.content = None
+                        choice.finish_reason = None
+                    text = choice.delta.content or ""
+                    if text:
+                        content.append(text)
+                    if kwargs.get("response_format"):
+                        # Structured responses are atomic: validate before exposing JSON.
+                        continue
+                    if text:
+                        committed = True
+                        yield chunk
+                if terminal is None:
+                    raise IncompleteCompletion("Upstream stream ended without a terminal marker")
+                text = "".join(content)
+                if not text.strip():
+                    raise EmptyCompletion("Provider returned no content")
+                validate_content(text, kwargs.get("response_format"))
+                if kwargs.get("response_format"):
+                    chunk = terminal.model_copy(deep=True)
+                    chunk.choices[0].delta.content = text
+                    chunk.choices[0].finish_reason = None
+                    committed = True
+                    yield chunk
+                yield terminal
+                return
+            except Exception as exc:
+                cause = exc
+                attempts.append(LLMAttempt(len(attempts), provider, False,
+                                (time.monotonic()-attempt_start)*1000,
+                                error_class=type(exc).__name__))
+                if committed and isinstance(exc, TimeoutError):
+                    raise IncompleteCompletion("Stream attempt timed out") from exc
+                if committed or not retryable(exc):
+                    raise
+            finally:
+                if stream is not None:
+                    await stream.aclose()
+        raise AllProvidersExhausted(model, attempts, cause) from cause
 
     @staticmethod
     def _record_call(call_id, alias, provider, depth, elapsed, attempts, response=None, usage=None, error=None):

@@ -5,6 +5,7 @@ import select
 import socket
 import threading
 import time
+from contextlib import aclosing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
@@ -14,7 +15,7 @@ from fastapi import FastAPI
 
 from gateway.generation import generation_router
 from gateway.llm.model_list import DEFAULT_CHAIN
-from gateway.llm.router import AllProvidersExhausted, Gateway
+from gateway.llm.router import AllProvidersExhausted, Gateway, GenerationDeadline
 from gateway.settings import Settings
 
 
@@ -266,3 +267,20 @@ def test_stream_errors_keep_their_failure_reason(wire, mode, code):
     assert code in response.text
     assert "[DONE]" not in response.text
     assert calls == (["gemini"] if mode == "hang" else list(DEFAULT_CHAIN))
+
+
+async def test_slow_stream_consumer_gets_deadline_error_not_hanging_iterator(wire):
+    gateway, _, modes, calls, _, closed = wire
+    await gateway.acomplete(MESSAGES)
+    calls.clear()
+    gateway.settings.generation_deadline_s = 0.2
+    modes["gemini"] = "hang"
+    async with aclosing(gateway.astream(MESSAGES)) as stream:
+        await anext(stream)
+        await asyncio.sleep(0.35)
+        with pytest.raises(GenerationDeadline):
+            async with asyncio.timeout(0.5):
+                async for _ in stream:
+                    pass
+    assert closed.wait(1)
+    assert calls == ["gemini"]

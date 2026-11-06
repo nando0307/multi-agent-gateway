@@ -92,6 +92,12 @@ All four Boss aliases currently share this configured chain: `boss-default`,
 `boss-deep`, `boss-graph-map`, `boss-graph-reduce`. Caller model IDs, upstream URLs
 and upstream credentials are not accepted.
 
+The Groq default is `groq/openai/gpt-oss-120b`. The previous
+`groq/llama-3.3-70b-versatile` returned 404 and was absent from the authenticated Groq
+model inventory; tiny text and schema probes passed on the replacement. Remove any
+explicit retired-model override when deploying. The optional research judge must use
+a different model; `.env.example` keeps it separate from the serving chain.
+
 1. Set the four provider keys and a separate, randomly generated
    `GATEWAY_SERVICE_TOKEN`. Do not reuse a user JWT or a provider key.
 2. Run `uv run gateway providers`. Missing keys appear as disabled. This is
@@ -183,6 +189,14 @@ The small Router override preserves its provider adapters while enforcing this c
 Run `uv run pytest tests/test_generation_http.py` before upgrading LiteLLM.
 That regression file exercises real loopback HTTP faults, including cancellation,
 schema validation, sync/async blank consistency, streaming EOF and token preservation.
+
+Sync and async callers share one lazily started, process-owned AnyIO event loop.
+This keeps LiteLLM's process-wide callback worker and cached HTTP clients alive
+instead of discarding queued callbacks when a per-call loop closes. Requests remain
+concurrent; only loop initialization is locked. Streams buffer at most one queued
+chunk and propagate cancellation through the portal. The total deadline remains
+active during consumer backpressure, with a terminal error rather than a hanging
+iterator. The portal is closed at process exit through its supported context manager.
 
 Approve data processing with **every** enabled provider before routing private RAG
 context. Embeddings, business-action tools, autonomous execution and public-web

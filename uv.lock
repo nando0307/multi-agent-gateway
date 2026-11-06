@@ -1315,6 +1315,7 @@ name = "multi-agent-gateway"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "anyio" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jsonschema" },
@@ -1341,6 +1342,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.4.0" },
     { name = "fastapi", specifier = ">=0.140.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "jsonschema", specifier = ">=4.26.0" },
