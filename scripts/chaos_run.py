@@ -2,14 +2,14 @@
 
 Two arms, identical seeded faults, identical requests:
 
-  Arm A (baseline)  single provider + retries, no failover   -> X%
-  Arm B (gateway)   full chain + retries + cooldowns         -> Y%
+  Arm A (baseline)  single provider, one bounded attempt each   -> X%
+  Arm B (gateway)   full chain, one bounded attempt each        -> Y%
 
 Two deliberate choices keep this from being a strawman:
 
-* **Arm A retries.** Comparing failover against a baseline with *no* retries would
-  inflate the delta for free. The baseline is what a competent single-provider
-  implementation looks like.
+* **Arm A gets the same per-request budget.** Comparing failover against a baseline with
+  no attempt at all would inflate the delta for free. The baseline is what a competent
+  single-provider implementation looks like.
 * **Sticky faults by default.** Real provider failures are correlated in time -- a 503
   during a deploy, a rate limit that persists for a window. Modelling faults as
   independent per attempt would make retries look far more effective than they are, and
@@ -108,7 +108,7 @@ def make_arm(chain: tuple[str, ...], *, fallbacks: bool) -> Gateway:
         {
             "model_name": name,
             "litellm_params": params(name),
-            "model_info": {"id": name, "provider": name, "chain_index": i},
+            "model_info": {"id": f"deployment::{name}", "provider": name, "chain_index": i},
         }
         for i, name in enumerate(chain)
     ]

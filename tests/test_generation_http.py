@@ -68,7 +68,14 @@ def wire(request):
                     send({"role": "assistant"})
                     if mode == "pre_eof":
                         return
-                    send({"content": content})
+                    if mode == "drip":
+                        # Split a valid schema answer across a slow drip.
+                        left, right = content[:9], content[9:]
+                        send({"content": left})
+                        time.sleep(1.0)
+                        send({"content": right})
+                    else:
+                        send({"content": content})
                     if mode == "post_eof":
                         return
                     if mode == "hang":
@@ -93,7 +100,7 @@ def wire(request):
     entries = [{"model_name": name,
                 "litellm_params": {"model": getattr(request, "param", "openai/gpt-4o-mini"), "api_key": "synthetic",
                     "api_base": f"http://127.0.0.1:{upstream.server_port}/{name}/v1"},
-                "model_info": {"id": name, "provider": name}}
+                "model_info": {"id": f"deployment::{name}", "provider": name}}
                for name in DEFAULT_CHAIN]
     gateway = Gateway(settings=settings, model_list=entries)
     app = FastAPI()
@@ -249,6 +256,21 @@ def test_structured_stream_never_exposes_invalid_json(wire):
     assert "invalid_completion" in response.text
     assert "department" not in response.text
     assert "[DONE]" not in response.text
+
+
+def test_a_slow_structured_answer_is_not_abandoned_mid_stream(wire):
+    """Buffered schema output is still provider output: the attempt must not be cut."""
+    gateway, client, modes, calls, _, _ = wire
+    assert client.post("/v1/chat/completions", json=PAYLOAD).status_code == 200
+    calls.clear()
+    gateway.settings.generation_attempt_s = 0.4   # the drip pauses for ~1s mid-answer
+    gateway.settings.generation_deadline_s = 10
+    modes["gemini"] = "drip"
+    response = client.post("/v1/chat/completions", json={**PAYLOAD, "stream": True,
+                                                        "response_format": SCHEMA})
+    assert response.status_code == 200, response.text
+    assert "[DONE]" in response.text
+    assert calls == ["gemini"]
 
 
 def test_nonstream_disconnect_stops_fallback(wire):

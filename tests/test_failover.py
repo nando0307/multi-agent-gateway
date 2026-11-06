@@ -16,8 +16,8 @@ from litellm.integrations.custom_logger import CustomLogger
 import pytest
 
 from gateway.llm.events import trace_run
-from gateway.llm.router import AllProvidersExhausted
-from tests.conftest import EMPTY, FAIL_429, FAIL_500, DEFAULT_CHAIN, make_gateway
+from gateway.llm.router import AllProvidersExhausted, Gateway
+from tests.conftest import EMPTY, FAIL_429, FAIL_500, DEFAULT_CHAIN, make_gateway, make_settings
 
 
 def test_healthy_primary_serves_at_depth_zero(messages):
@@ -49,6 +49,8 @@ def test_all_providers_down_raises_cleanly_and_does_not_hang(messages):
     with pytest.raises(AllProvidersExhausted) as exc:
         gw.complete(messages)
     assert "research-primary" in str(exc.value)
+    # The CLI and /research only show str(exc); it must name what was tried.
+    assert "gemini:InternalServerError" in str(exc.value)
 
 
 def test_a_cooled_provider_advances_the_chain_instead_of_aborting_it(messages):
@@ -58,7 +60,7 @@ def test_a_cooled_provider_advances_the_chain_instead_of_aborting_it(messages):
     ``RouterRateLimitError`` (a ValueError with no status_code) for it. That is a provider
     outage belonging to the same class as 429/5xx: the chain has to keep walking.
     """
-    gw = make_gateway({"gemini": FAIL_500, "nim": FAIL_500}, id_prefix="deployment::")
+    gw = make_gateway({"gemini": FAIL_500, "nim": FAIL_500})
     errors = []
     for _ in range(6):
         result = gw.complete(messages)
@@ -68,8 +70,7 @@ def test_a_cooled_provider_advances_the_chain_instead_of_aborting_it(messages):
 
 
 def test_every_provider_cooled_is_exhaustion_not_a_client_error(messages):
-    gw = make_gateway({"gemini": FAIL_500, "openrouter": FAIL_500},
-                      chain=("gemini", "openrouter"), id_prefix="deployment::")
+    gw = make_gateway({"gemini": FAIL_500, "openrouter": FAIL_500}, chain=("gemini", "openrouter"))
     error = None
     for _ in range(6):
         try:
@@ -80,6 +81,33 @@ def test_every_provider_cooled_is_exhaustion_not_a_client_error(messages):
             error = None
     assert error is not None
     assert [a.error_class for a in error.attempts] == ["RouterRateLimitError", "RouterRateLimitError"]
+
+
+def test_the_shipped_model_list_lets_the_router_cool_a_dead_provider(messages):
+    """allowed_fails/cooldown_time_s must bind on the real config, not just in fixtures.
+
+    LiteLLM resolves a call whose model name equals a deployment id as that specific
+    deployment, skipping the cooldown filter entirely -- so the shipped ids must stay
+    distinct from the model-group names.
+    """
+    from gateway.llm.model_list import build_model_list
+
+    settings = make_settings()
+    model_list, chain = build_model_list(settings)
+    assert chain[0] == "gemini"
+    for entry in model_list:
+        entry["litellm_params"] = {
+            "model": "openai/gpt-4o-mini", "api_key": "sk-test-not-real",
+            "mock_response": FAIL_500 if entry["model_name"] == "gemini"
+            else f"answer from {entry['model_name']}",
+        }
+    gw = Gateway(settings=settings, model_list=model_list)
+    errors = []
+    for _ in range(5):
+        result = gw.complete(messages)
+        assert result.served_by == "openrouter", result.attempts
+        errors.extend(attempt.error_class for attempt in result.attempts)
+    assert "RouterRateLimitError" in errors, errors
 
 
 def test_only_local_tier_survives(messages):

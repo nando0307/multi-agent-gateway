@@ -57,15 +57,14 @@ def make_gateway(
     behaviour: dict[str, object] | None = None,
     chain: tuple[str, ...] = DEFAULT_CHAIN,
     settings: Settings | None = None,
-    id_prefix: str = "",
     **router_kwargs,
 ) -> Gateway:
     """Build a Gateway whose providers behave exactly as ``behaviour`` dictates.
 
     ``behaviour[name]`` is either a success string or a ``FAIL_*`` sentinel. Unlisted
-    providers succeed. ``id_prefix`` namespaces the LiteLLM deployment ids away from the
-    model names, which is what makes the Router apply its own cooldown policy: an id that
-    equals the requested name is resolved as one specific deployment and skips it.
+    providers succeed. Deployment ids follow ``build_model_list``: an id equal to the
+    model-group name would be resolved as one specific deployment and skip the Router's
+    cooldown filtering.
     """
     behaviour = behaviour or {}
     settings = settings or make_settings()
@@ -81,7 +80,7 @@ def make_gateway(
         {
             "model_name": name,
             "litellm_params": params(name),
-            "model_info": {"id": f"{id_prefix}{name}", "provider": name, "chain_index": tier},
+            "model_info": {"id": f"deployment::{name}", "provider": name, "chain_index": tier},
         }
         for tier, name in enumerate(chain)
     ]

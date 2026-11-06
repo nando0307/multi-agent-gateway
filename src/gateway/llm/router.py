@@ -68,7 +68,9 @@ class AllProvidersExhausted(RuntimeError):
         self.alias = alias
         self.attempts = attempts
         self.__cause__ = cause
-        super().__init__(f"all providers exhausted for {alias!r}")
+        tried = ", ".join(f"{a.provider}:{a.error_class}" for a in attempts) or (
+            type(cause).__name__ if cause is not None else "none recorded")
+        super().__init__(f"all providers exhausted for {alias!r} (tried: {tried})")
 
 
 def retryable(exc: Exception) -> bool:
@@ -166,6 +168,12 @@ class Gateway:
         future = _completion_portal().start_task_soon(partial(self._acomplete, messages, model=model, **kwargs))
         try:
             return future.result()
+        except AllProvidersExhausted:
+            raise
+        except Exception as exc:
+            # One normalised failure for every routed-provider failure, which is what the
+            # research callers were written against.
+            raise AllProvidersExhausted(model, [], exc) from exc
         finally:
             future.cancel()
 
@@ -264,18 +272,21 @@ class Gateway:
             remaining = self.settings.generation_deadline_s - (attempt_start - started)
             try:
                 prompt, options, timeout = self._options(provider, messages, kwargs, remaining)
+                # The asyncio window below bounds the pre-content phase; the transport may
+                # only be cut by the shared deadline once a stream has started.
+                options["timeout"] = remaining
                 attempt_deadline = time.monotonic() + timeout
                 async with asyncio.timeout(timeout):
                     stream = await self.router.acompletion(model=provider, messages=prompt,
                                                           stream=True, **options)
-                terminal, content = None, []
+                terminal, content, emitted = None, [], False
                 stream_deadline = started + self.settings.generation_deadline_s
                 while True:
                     # No cancellation scope crosses yield: a slow consumer must not
                     # receive the producer's cancellation instead of a terminal error.
                     try:
                         async with asyncio.timeout(
-                            (stream_deadline if committed else attempt_deadline) - time.monotonic()
+                            (stream_deadline if emitted else attempt_deadline) - time.monotonic()
                         ):
                             chunk = await anext(stream)
                     except StopAsyncIteration:
@@ -299,6 +310,7 @@ class Gateway:
                     text = choice.delta.content or ""
                     if text:
                         content.append(text)
+                        emitted = True
                     if kwargs.get("response_format"):
                         # Structured responses are atomic: validate before exposing JSON.
                         continue

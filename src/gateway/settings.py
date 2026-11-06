@@ -67,7 +67,8 @@ class Settings(BaseSettings):
 
     deepseek_api_key: str | None = None
     deepseek_model: str = "deepseek/deepseek-chat"
-    deepseek_timeout_s: float = 15.0
+    # At least the generation attempt window, or it silently becomes the real cap.
+    deepseek_timeout_s: float = 45.0
 
     gateway_service_token: str | None = None
     generation_deadline_s: float = Field(default=60.0, gt=0)

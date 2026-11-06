@@ -106,7 +106,10 @@ def build_model_list(
                 "model_name": name,
                 # A per-provider timeout in params wins over the global default.
                 "litellm_params": {"timeout": settings.request_timeout_s, **params},
-                "model_info": {"id": name, "provider": name, "chain_index": tier},
+                # The deployment id must differ from the model-group name: a call whose
+                # `model` matches an id is resolved as that one deployment and skips the
+                # Router's cooldown/health filtering.
+                "model_info": {"id": f"deployment::{name}", "provider": name, "chain_index": tier},
             }
         )
 
