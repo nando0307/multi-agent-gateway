@@ -5,7 +5,7 @@ Two arms, identical seeded faults, identical requests:
   Arm A (baseline)  single provider, one bounded attempt each   -> X%
   Arm B (gateway)   full chain, one bounded attempt each        -> Y%
 
-Two deliberate choices keep this from being a strawman:
+Deliberate choices keep this from being a strawman:
 
 * **Arm A gets the same per-request budget.** Comparing failover against a baseline with
   no attempt at all would inflate the delta for free. The baseline is what a competent
@@ -15,6 +15,9 @@ Two deliberate choices keep this from being a strawman:
   independent per attempt would make retries look far more effective than they are, and
   would understate the case for multi-provider failover. ``--fault-model independent``
   is available for comparison.
+* **Cooldowns are disabled** (see ``disable_cooldowns``). They are wall-clock, and a mocked
+  arm runs in seconds, so leaving them on measures cooldown saturation rather than the
+  injected fault rate.
 
 Latency here is not wall-clock (the transport is mocked); the cost of failover is
 reported as *added attempts* and mean fallback depth, which combine with the real p95
@@ -99,7 +102,7 @@ def build_schedules(n, p, model, rng, local_fail: float) -> dict[str, list[bool]
 
 # --------------------------------------------------------------------------- gateway
 def make_arm(chain: tuple[str, ...], *, fallbacks: bool) -> Gateway:
-    settings = make_settings(cooldown_time_s=30)
+    settings = make_settings()
 
     def params(name: str) -> dict:
         return {"model": "openai/gpt-4o-mini", "api_key": "sk-test", "mock_response": "ok"}
@@ -122,7 +125,28 @@ def make_arm(chain: tuple[str, ...], *, fallbacks: bool) -> Gateway:
     gw = Gateway(settings=settings, model_list=entries)
     if not fallbacks:
         gw.router.fallbacks = []
+    disable_cooldowns(gw)
     return gw
+
+
+def disable_cooldowns(gw: Gateway) -> None:
+    """Benchmark only: neutralise provider cooldowns on this Router instance.
+
+    Cooldowns are wall-clock (60 s in the shipped settings) while a mocked arm finishes in
+    seconds, so a single entry covers every later request and the arm reports cooldown
+    saturation instead of the injected fault rate. `cooldown_time=0` does not help: LiteLLM
+    reads it as unset (`cooldown_time or DEFAULT_COOLDOWN_TIME_SECONDS`). Serving behaviour
+    is untouched -- only Routers built by this script are patched, so what is measured is
+    routing and fallback, not cooldown.
+    """
+    cache = gw.router.cooldown_cache
+
+    async def no_cooldowns(*args, **kwargs):
+        return []
+
+    cache.async_get_active_cooldowns = no_cooldowns
+    cache.get_active_cooldowns = lambda *args, **kwargs: []
+    cache.add_deployment_to_cooldown = lambda *args, **kwargs: None
 
 
 def apply_faults(gw: Gateway, down: dict[str, bool], rng: random.Random) -> None:
@@ -202,6 +226,14 @@ def main() -> int:
         gwy = run_arm("gateway", make_arm(CHAIN, fallbacks=True), schedules, args.n,
                       random.Random(args.seed + 1))
         rows.append((p, base, gwy))
+        # Failover cannot do worse than the injected per-provider fault rate. If it looks
+        # like it does, the harness is measuring something else -- cooldowns are the
+        # usual cause, and publishing those figures inverts the claim.
+        if gwy.failure_rate > 100 * p:
+            raise SystemExit(
+                f"p={p}: gateway failures {gwy.failure_rate:.1f}% exceed the injected "
+                f"{p:.0%} fault rate -- the harness is not measuring failover"
+            )
         raw.append(
             {
                 "p": p,
@@ -230,7 +262,7 @@ def main() -> int:
         "# Phase 3 - Forced-failure study",
         "",
         f"`n = {args.n}` requests per arm per fault rate · fault model = **{args.fault_model}** "
-        f"· seed = {args.seed} · chain = {' -> '.join(CHAIN)}",
+        f"· seed = {args.seed} · chain = {' -> '.join(CHAIN)} · provider cooldowns disabled",
         "",
         ("Every tier is cloud-hosted and gets the same sticky fault model. There is no longer "
          "a local tier immune to rate limiting -- Groq replaced Ollama for speed -- so the "
@@ -280,8 +312,12 @@ def main() -> int:
         "## What this does and does not show",
         "",
         "* Faults are injected at the transport layer against real `litellm.Router` fallback "
-        "logic -- the routing, retry and cooldown machinery under test is the production code "
+        "logic -- the routing and fallback machinery under test is the production code "
         "path. Only the network is simulated.",
+        "* Provider cooldowns are disabled for this run. They are wall-clock (60 s shipped) "
+        "while a mocked arm finishes in seconds, so one entry would cover every later "
+        "request and the arm would report cooldown saturation instead of the injected fault "
+        "rate. Routing and fallback are what this study measures; cooldown recovery is not.",
         "* Latency here is not wall-clock. The cost of failover is reported as mean fallback "
         "depth; multiply by the per-provider p95 in `results/latency.md` for the real added "
         "latency.",

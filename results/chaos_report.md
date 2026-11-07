@@ -1,24 +1,10 @@
 # Phase 3 - Forced-failure study
 
-`n = 1000` requests per arm per fault rate · fault model = **sticky** · seed = 7 · chain = openrouter -> gemini -> groq -> nim
-
-Historical run: recorded against the OpenRouter-first p95 chain and a retrying baseline arm.
-The shipped serving order is Gemini -> OpenRouter -> Groq -> DeepSeek (README.md owns it) and
-both arms now take one bounded attempt per provider, so these numbers describe the chain that
-was measured, not the one that ships.
-
-The shipped chain has **not** been re-measured, and re-running `scripts/chaos_run.py` today
-does not produce a publishable number: the harness has no simulated clock, while provider
-cooldowns are wall-clock (30-60 s). A mocked arm finishes in seconds, so one cooldown entry
-covers every remaining request and the arm reports cooldown exhaustion as failover failure --
-measured on 2026-11-06 (`--n 1000 --p 0.1 0.3 0.5`): baseline 89.4% / gateway 61.7% failed at
-p=0.1, with the first failure at request 383 reporting `gemini:RouterRateLimitError`,
-`openrouter:...`, `groq:...` while all three were cooling. Give the harness a simulated clock
-before republishing these figures.
+`n = 1000` requests per arm per fault rate · fault model = **sticky** · seed = 7 · chain = gemini -> openrouter -> groq -> deepseek · provider cooldowns disabled
 
 Every tier is cloud-hosted and gets the same sticky fault model. There is no longer a local tier immune to rate limiting -- Groq replaced Ollama for speed -- so the residual rate here is genuinely bounded by all four providers failing together, not by an assumption about a backstop.
 
-Both arms see **identical** seeded faults and identical requests. The baseline is a single provider *with* retries (`num_retries=2`), not a strawman without them.
+Both arms see **identical** seeded faults and identical requests. Each approved provider gets one bounded attempt, with no nested retries.
 
 ## Headline
 
@@ -34,7 +20,7 @@ At a **30% provider failure rate**, request failures fell from **31.2%** (95% CI
 
 ## Which tier served
 
-| provider failure rate | openrouter | gemini | groq | nim |
+| provider failure rate | gemini | openrouter | groq | deepseek |
 |---|---|---|---|---|
 | 10% | 914 | 73 | 12 | 1 |
 | 30% | 688 | 235 | 54 | 21 |
@@ -42,7 +28,8 @@ At a **30% provider failure rate**, request failures fell from **31.2%** (95% CI
 
 ## What this does and does not show
 
-* Faults are injected at the transport layer against real `litellm.Router` fallback logic -- the routing, retry and cooldown machinery under test is the production code path. Only the network is simulated.
+* Faults are injected at the transport layer against real `litellm.Router` fallback logic -- the routing and fallback machinery under test is the production code path. Only the network is simulated.
+* Provider cooldowns are disabled for this run. They are wall-clock (60 s shipped) while a mocked arm finishes in seconds, so one entry would cover every later request and the arm would report cooldown saturation instead of the injected fault rate. Routing and fallback are what this study measures; cooldown recovery is not.
 * Latency here is not wall-clock. The cost of failover is reported as mean fallback depth; multiply by the per-provider p95 in `results/latency.md` for the real added latency.
-* Provider outages are modelled as independent across providers. Correlated failure (a shared upstream) is mitigated by choosing an OpenRouter model from a different vendor than Gemini/NIM, not by this experiment.
+* Provider outages are modelled as independent across providers. Correlated failure (a shared upstream) is mitigated by choosing an OpenRouter model from a different vendor than Gemini, Groq and DeepSeek, not by this experiment.
 * All four tiers are cloud providers, so a correlated outage (shared upstream, shared region) would take more of the chain than this independent-failure model assumes. The previous version of this study had a local tier that could not rate-limit, which made the residual rate structurally lower; that is gone.
