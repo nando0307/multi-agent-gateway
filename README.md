@@ -197,7 +197,8 @@ Errors never include upstream response bodies, credentials or prompt contents:
 After SSE headers, these errors are data frames rather than new HTTP statuses.
 LiteLLM is pinned because its 1.93 stream wrapper otherwise synthesizes success on
 premature EOF and can continue another model's answer even with fallbacks disabled.
-The small Router override preserves its provider adapters while enforcing this contract.
+The small Router override preserves its provider adapters while enforcing this contract,
+and attempt expiries are fed to its private cooldown hook so a hanging provider cools.
 Run `uv run pytest tests/test_generation_http.py` before upgrading LiteLLM.
 That regression file exercises real loopback HTTP faults, including cancellation,
 schema validation, sync/async blank consistency, streaming EOF and token preservation.

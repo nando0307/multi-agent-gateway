@@ -211,6 +211,11 @@ def test_concurrent_sync_async_calls_deliver_their_success_callbacks():
         with ThreadPoolExecutor(max_workers=4) as pool:
             results = [pool.submit(call, f"callback-{index}", bool(index % 2)) for index in range(4)]
             assert all(result.result(timeout=5).served_by == "gemini" for result in results)
-        assert {delivered.get(timeout=5) for _ in results} == {f"callback-{index}" for index in range(4)}
+        expected = {f"callback-{index}" for index in range(4)}
+        seen = set()
+        while not expected <= seen:
+            # Other tests' callbacks can arrive late; only these four are the claim.
+            seen.add(delivered.get(timeout=5))
+        assert expected <= seen
     finally:
         litellm.callbacks.remove(recorder)

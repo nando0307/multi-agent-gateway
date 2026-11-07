@@ -16,6 +16,7 @@ import litellm
 from anyio.from_thread import start_blocking_portal
 from jsonschema import Draft202012Validator, ValidationError
 from litellm import Router
+from litellm.router_utils.cooldown_handlers import _set_cooldown_deployments
 
 from gateway.llm.events import LLMAttempt, LLMCallRecord, get_trace
 from gateway.llm.model_list import BOSS_ALIASES, PRIMARY_ALIAS, build_model_list
@@ -92,10 +93,16 @@ def retryable(exc: Exception) -> bool:
     return getattr(exc, "status_code", None) in (401, 403, 429, 500, 502, 503, 504)
 
 
+def _reject_constant(name: str) -> float:
+    raise ValueError(f"{name} is not a JSON number")
+
+
 def validate_content(text: str, response_format: dict | None) -> None:
     if response_format and response_format.get("type") == "json_schema":
         try:
-            value = json.loads(text)
+            # json.loads accepts NaN/Infinity/-Infinity, which JSON does not have and
+            # jsonschema's numeric bounds do not reject.
+            value = json.loads(text, parse_constant=_reject_constant)
             Draft202012Validator(response_format["json_schema"]["schema"]).validate(value)
         except (ValueError, ValidationError) as exc:
             raise InvalidCompletion("Provider returned invalid structured output") from exc
@@ -159,6 +166,29 @@ class Gateway:
             return True
         return "response_format" in (litellm.get_supported_openai_params(model=target) or [])
 
+    def _budget(self, model):
+        """Boss generation shares one deadline; research is bounded per attempt only."""
+        if model in BOSS_ALIASES:
+            return self.settings.generation_deadline_s, self.settings.generation_attempt_s
+        return None, self.settings.request_timeout_s
+
+    def _cool_down(self, provider, exc):
+        """Count a wrapper-enforced attempt expiry against the deployment.
+
+        Our attempt window cancels LiteLLM before its transport timeout, so its failure
+        handlers never see the failure; without this the Router would re-try a hanging
+        provider on every request.
+        """
+        deployment = next(e for e in self.model_list
+                          if e["model_name"] == provider)["model_info"]["id"]
+        _set_cooldown_deployments(
+            litellm_router_instance=self.router,
+            original_exception=exc,
+            exception_status=500,
+            deployment=deployment,
+            time_to_cooldown=self.settings.cooldown_time_s,
+        )
+
     def _options(self, provider, messages, kwargs, remaining, attempt_s=None):
         entry = next(e for e in self.model_list if e["model_name"] == provider)
         params = entry["litellm_params"]
@@ -178,10 +208,8 @@ class Gateway:
         return messages, options, timeout
 
     def complete(self, messages, *, model=PRIMARY_ALIAS, **kwargs):
-        """Blocking facade for the research path; async callers must use acomplete/astream."""
-        future = _completion_portal().start_task_soon(partial(
-            self._acomplete, messages, model=model, deadline_s=None,
-            attempt_s=self.settings.request_timeout_s, **kwargs))
+        """Blocking facade; async callers must use acomplete/astream."""
+        future = _completion_portal().start_task_soon(partial(self._acomplete, messages, model=model, **kwargs))
         try:
             return future.result()
         except AllProvidersExhausted:
@@ -194,19 +222,16 @@ class Gateway:
             future.cancel()
 
     async def acomplete(self, messages, *, model=PRIMARY_ALIAS, **kwargs):
-        future = _completion_portal().start_task_soon(partial(
-            self._acomplete, messages, model=model,
-            deadline_s=self.settings.generation_deadline_s,
-            attempt_s=self.settings.generation_attempt_s, **kwargs))
+        future = _completion_portal().start_task_soon(partial(self._acomplete, messages, model=model, **kwargs))
         try:
             return await asyncio.wrap_future(future)
         finally:
             future.cancel()
 
-    async def _acomplete(self, messages, *, model=PRIMARY_ALIAS, deadline_s=None, attempt_s=None,
-                         **kwargs):
+    async def _acomplete(self, messages, *, model=PRIMARY_ALIAS, **kwargs):
         if kwargs.pop("stream", False):
             raise ValueError("Use astream for streaming generation")
+        deadline_s, attempt_s = self._budget(model)
         started, call_id, attempts = time.monotonic(), uuid.uuid4().hex[:8], []
         cause = None
         try:
@@ -234,6 +259,8 @@ class Gateway:
                         attempts.append(LLMAttempt(len(attempts), provider, False,
                                         (time.monotonic() - attempt_start) * 1000,
                                         error_class=type(exc).__name__))
+                        if isinstance(exc, TimeoutError):
+                            self._cool_down(provider, exc)
                         if not retryable(exc):
                             raise
                         continue
@@ -360,6 +387,8 @@ class Gateway:
                 attempts.append(LLMAttempt(len(attempts), provider, False,
                                 (time.monotonic()-attempt_start)*1000,
                                 error_class=type(exc).__name__))
+                if isinstance(exc, TimeoutError) and not committed:
+                    self._cool_down(provider, exc)
                 if committed and isinstance(exc, TimeoutError):
                     if time.monotonic() >= started + self.settings.generation_deadline_s:
                         raise GenerationDeadline("Generation deadline exceeded") from exc

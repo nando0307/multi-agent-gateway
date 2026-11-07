@@ -52,7 +52,11 @@ def wire(request):
                 return
             content = "   " if mode == "empty" else "answer from " + provider
             if body.get("response_format"):
-                content = '{"department":"hr"}' if mode != "bad_json" else '{"department":7}'
+                content = '{"department":"hr"}'
+                if mode == "bad_json":
+                    content = '{"department":7}'
+                elif mode == "nan_json":
+                    content = '{"score": NaN}'
             if mode == "refusal":
                 content = ""
             self.send_response(200)
@@ -221,8 +225,42 @@ def test_research_callers_keep_their_own_budget(wire):
     gateway.settings.generation_attempt_s = 5
     modes["gemini"] = "slow"
     with pytest.raises(GenerationDeadline):
-        asyncio.run(gateway.acomplete(MESSAGES))
+        asyncio.run(gateway.acomplete(MESSAGES, model="boss-default"))
+    assert asyncio.run(gateway.acomplete(MESSAGES)).served_by == "gemini"
     assert gateway.complete(MESSAGES).served_by == "gemini"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_hanging_providers_are_cooled_after_a_wrapper_timeout(wire, stream):
+    """A provider that never answers must enter cooldown, not be re-tried forever."""
+    gateway, client, modes, calls, _, _ = wire
+    assert client.post("/v1/chat/completions",
+                       json={**PAYLOAD, "stream": stream}).status_code == 200
+    calls.clear()
+    gateway.router.allowed_fails = 0
+    gateway.settings.generation_attempt_s = 0.2
+    gateway.settings.generation_deadline_s = 8
+    modes.update({"gemini": "slow", "openrouter": "slow"})
+    response = client.post("/v1/chat/completions", json={**PAYLOAD, "stream": stream})
+    assert response.status_code == 200, response.text
+    calls.clear()
+    response = client.post("/v1/chat/completions", json={**PAYLOAD, "stream": stream})
+    assert response.status_code == 200, response.text
+    assert calls == ["groq"]
+
+
+def test_non_json_numeric_constants_are_rejected(wire):
+    """NaN passes json.loads and jsonschema's bounds; it is not valid JSON."""
+    score_schema = {"type": "json_schema", "json_schema": {
+        "name": "Readiness", "strict": True,
+        "schema": {"type": "object",
+                   "properties": {"score": {"type": "number", "minimum": 0, "maximum": 1}},
+                   "required": ["score"], "additionalProperties": False}}}
+    _, client, modes, _, _, _ = wire
+    modes.update({name: "nan_json" for name in DEFAULT_CHAIN})
+    response = client.post("/v1/chat/completions", json={**PAYLOAD, "response_format": score_schema})
+    assert response.status_code == 502, response.text
+    assert response.json()["error"]["code"] == "invalid_completion"
 
 
 @pytest.mark.parametrize("mode,expected", [("ok", ["gemini"]), ("pre_eof", ["gemini", "openrouter"]),
