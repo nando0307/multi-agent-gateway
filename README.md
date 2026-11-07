@@ -177,7 +177,10 @@ All-blank exhaustion is 503. When the request names an output cap
 (`finish_reason` `length`) is a budget condition, not a provider failure: it is
 terminal for the request on both paths, never advances to a backup, and is reported
 as `400 output_truncated` naming the requested token budget. A request without a cap
-keeps the older semantics, so a provider's own default cap fails over instead.
+names no such budget, so each tier's own default cap is tried in turn; if every tier
+stops at its default cap the request is still reported as `400 output_truncated`,
+never as 503 `providers_exhausted`. Research callers name no cap, so a truncation
+there surfaces through their existing normalised "all providers exhausted" contract.
 A provider whose attempt window expires without producing content is put into LiteLLM's
 deployment cooldown immediately, as is a provider still in flight when the shared budget
 runs out, so a sustained hang costs one attempt window rather than blocking the chain for
@@ -195,7 +198,7 @@ Errors never include upstream response bodies, credentials or prompt contents:
 |---|---|---|
 | 400 | `invalid_request` | Unsupported/invalid input or schema |
 | 400 | `generation_refused` | Provider safety refusal; no fallback |
-| 400 | `output_truncated` | Provider hit the request's output cap; retry with a larger budget |
+| 400 | `output_truncated` | Output cap reached (requested, or every tier's default); retry with a larger budget |
 | 401 | `authentication_error` | Invalid service Bearer token |
 | 502 | `invalid_completion` | Output failed required schema |
 | 502 | `stream_interrupted` | Stream ended without a terminal marker |

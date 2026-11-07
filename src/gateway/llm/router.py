@@ -56,11 +56,13 @@ class InvalidCompletion(RuntimeError):
 
 
 class OutputTruncated(RuntimeError):
-    """A healthy provider answered until the request's own output cap."""
+    """A healthy provider answered until an output cap rather than failing."""
 
-    def __init__(self, max_tokens):
+    def __init__(self, max_tokens=None):
         self.max_tokens = max_tokens
-        super().__init__(f"Output truncated at the requested max_tokens={max_tokens}")
+        detail = (f"Output truncated at the requested max_tokens={max_tokens}" if max_tokens
+                  else "Output truncated at the provider's default output cap")
+        super().__init__(detail)
 
 
 class GenerationRefused(RuntimeError):
@@ -81,10 +83,18 @@ class AllProvidersExhausted(RuntimeError):
         super().__init__(f"all providers exhausted for {alias!r} (tried: {tried})")
 
 
+class TruncatedExhausted(AllProvidersExhausted):
+    """Every eligible tier stopped at its own default output cap."""
+
+
 def retryable(exc: Exception) -> bool:
     # Normalized safety/input errors win over an ambiguous upstream HTTP status.
+    if isinstance(exc, OutputTruncated):
+        # A cap the caller named is the request's own budget; a provider's default cap is
+        # worth retrying on a tier that may have a larger one.
+        return exc.max_tokens is None
     if isinstance(exc, (litellm.BadRequestError, litellm.ContentPolicyViolationError,
-                        GenerationRefused, OutputTruncated)):
+                        GenerationRefused)):
         return False
     if isinstance(exc, (EmptyCompletion, IncompleteCompletion, TimeoutError,
                         litellm.APIConnectionError, litellm.Timeout, litellm.RateLimitError,
@@ -242,13 +252,16 @@ class Gateway:
         deadline_s, attempt_s = self._budget(model)
         started, call_id, attempts = time.monotonic(), uuid.uuid4().hex[:8], []
         cause, in_flight = None, None
+        truncated = True
         try:
             async with asyncio.timeout(deadline_s):
                 for provider in self._providers(model, kwargs.get("response_format")):
-                    in_flight = provider
                     attempt_start = time.monotonic()
                     remaining = (float("inf") if deadline_s is None
                                  else deadline_s - (attempt_start - started))
+                    if remaining <= 0:
+                        raise GenerationDeadline("Generation deadline exceeded")
+                    in_flight = provider
                     try:
                         prompt, options, timeout = self._options(provider, messages, kwargs,
                                                                 remaining, attempt_s)
@@ -257,8 +270,8 @@ class Gateway:
                         choice = response.choices[0]
                         if choice.finish_reason == "content_filter" or getattr(choice.message, "refusal", None):
                             raise GenerationRefused("Provider refused generation")
-                        if choice.finish_reason == "length" and kwargs.get("max_tokens") is not None:
-                            raise OutputTruncated(kwargs["max_tokens"])
+                        if choice.finish_reason == "length":
+                            raise OutputTruncated(kwargs.get("max_tokens"))
                         if choice.finish_reason not in ("stop", "tool_calls", "function_call"):
                             raise IncompleteCompletion("Provider did not complete the answer")
                         text = choice.message.content or ""
@@ -267,6 +280,7 @@ class Gateway:
                         validate_content(text, kwargs.get("response_format"))
                     except Exception as exc:
                         cause = exc
+                        truncated = truncated and isinstance(exc, OutputTruncated)
                         attempts.append(LLMAttempt(len(attempts), provider, False,
                                         (time.monotonic() - attempt_start) * 1000,
                                         error_class=type(exc).__name__))
@@ -284,6 +298,8 @@ class Gateway:
                     return CallResult(text, provider, depth, attempts, elapsed, response, response.usage)
                 if isinstance(cause, InvalidCompletion):
                     raise cause
+                if truncated and attempts:
+                    raise TruncatedExhausted(model, attempts, cause) from cause
                 raise AllProvidersExhausted(model, attempts, cause) from cause
         except TimeoutError as exc:
             # The shared budget expired while this provider was still answering: it consumed
@@ -333,10 +349,13 @@ class Gateway:
         started = time.monotonic()
         attempts, cause = [], None
         committed = False
+        truncated = True
         for provider in self._providers(model, kwargs.get("response_format")):
             stream = None
             attempt_start = time.monotonic()
             remaining = self.settings.generation_deadline_s - (attempt_start - started)
+            if remaining <= 0:
+                raise GenerationDeadline("Generation deadline exceeded")
             try:
                 prompt, options, timeout = self._options(provider, messages, kwargs, remaining)
                 # The asyncio window below bounds the pre-content phase; the transport may
@@ -369,8 +388,8 @@ class Gateway:
                         # LiteLLM synthesizes stop on clean EOF. Require adapter evidence.
                         if not getattr(stream, "received_finish_reason", None):
                             raise IncompleteCompletion("Upstream stream ended without a terminal marker")
-                        if choice.finish_reason == "length" and kwargs.get("max_tokens") is not None:
-                            raise OutputTruncated(kwargs["max_tokens"])
+                        if choice.finish_reason == "length":
+                            raise OutputTruncated(kwargs.get("max_tokens"))
                         if choice.finish_reason != "stop":
                             raise IncompleteCompletion("Provider did not complete the answer")
                         terminal = chunk.model_copy(deep=True)
@@ -402,6 +421,7 @@ class Gateway:
                 return
             except Exception as exc:
                 cause = exc
+                truncated = truncated and isinstance(exc, OutputTruncated)
                 attempts.append(LLMAttempt(len(attempts), provider, False,
                                 (time.monotonic()-attempt_start)*1000,
                                 error_class=type(exc).__name__))
@@ -424,6 +444,8 @@ class Gateway:
                     await stream.aclose()
         if isinstance(cause, InvalidCompletion):
             raise cause
+        if truncated and attempts:
+            raise TruncatedExhausted(model, attempts, cause) from cause
         raise AllProvidersExhausted(model, attempts, cause) from cause
 
     @staticmethod

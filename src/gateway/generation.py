@@ -16,7 +16,7 @@ from starlette.requests import ClientDisconnect
 from gateway.llm.model_list import BOSS_ALIASES
 from gateway.llm.router import (
     AllProvidersExhausted, GenerationDeadline, GenerationRefused, IncompleteCompletion,
-    InvalidCompletion, OutputTruncated,
+    InvalidCompletion, OutputTruncated, TruncatedExhausted,
 )
 
 
@@ -93,6 +93,9 @@ def error_response(exc, *, streaming=False):
         status, code = 504, "generation_deadline"
     elif isinstance(exc, OutputTruncated):
         status, code, message = 400, "output_truncated", str(exc)
+    elif isinstance(exc, TruncatedExhausted):
+        status, code, message = 400, "output_truncated", (
+            "Output truncated at the default output cap of every available provider")
     elif isinstance(exc, GenerationRefused) or isinstance(exc, litellm.ContentPolicyViolationError):
         status, code = 400, "generation_refused"
     elif isinstance(exc, (ValidationError, SchemaError, ValueError, litellm.BadRequestError)):

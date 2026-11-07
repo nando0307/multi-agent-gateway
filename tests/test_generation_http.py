@@ -271,6 +271,26 @@ def test_serial_requests_recover_under_shipped_budget_ratios(wire, stream):
     assert calls == ["groq"]
 
 
+@pytest.mark.parametrize("stream", [False, True])
+def test_a_spent_shared_budget_cools_no_provider(wire, stream):
+    """A tier that never gets a window must not be charged for the request's deadline."""
+    gateway, client, _, calls, _, _ = wire
+    assert client.post("/v1/chat/completions",
+                       json={**PAYLOAD, "stream": stream}).status_code == 200
+    calls.clear()
+    gateway.settings.generation_deadline_s = 0.0
+    response = client.post("/v1/chat/completions", json={**PAYLOAD, "stream": stream})
+    assert "generation_deadline" in response.text
+    assert calls == [], "no provider may be attempted without a window left"
+    calls.clear()
+    gateway.settings.generation_deadline_s = 4
+    response = client.post("/v1/chat/completions", json={**PAYLOAD, "stream": stream})
+    if stream:
+        assert "answer from gemini" in response.text
+    else:
+        assert response.headers["x-gateway-provider"] == "gemini", response.text
+
+
 def test_non_json_numeric_constants_are_rejected(wire):
     """NaN passes json.loads and jsonschema's bounds; it is not valid JSON."""
     score_schema = {"type": "json_schema", "json_schema": {
@@ -285,19 +305,42 @@ def test_non_json_numeric_constants_are_rejected(wire):
     assert response.json()["error"]["code"] == "invalid_completion"
 
 
-def test_truncation_is_terminal_only_when_the_request_named_a_cap(wire):
-    """A provider's own default cap must not abort a research call that named no budget."""
+def test_truncation_fails_over_and_keeps_the_legacy_research_contract(wire):
+    """A provider's own default cap must never leak a new error class into research callers."""
     gateway, _, modes, calls, _, _ = wire
     modes["gemini"] = "truncate"
     assert asyncio.run(gateway.acomplete(MESSAGES)).served_by == "openrouter"
     assert calls == ["gemini", "openrouter"]
     modes.update({name: "truncate" for name in DEFAULT_CHAIN})
-    with pytest.raises(AllProvidersExhausted):
-        asyncio.run(gateway.acomplete(MESSAGES))
+    calls.clear()
+    for call in (lambda: gateway.complete(MESSAGES), lambda: asyncio.run(gateway.acomplete(MESSAGES))):
+        with pytest.raises(AllProvidersExhausted) as raised:
+            call()
+        assert not isinstance(raised.value, OutputTruncated)
+    assert calls == list(DEFAULT_CHAIN) * 2
     calls.clear()
     with pytest.raises(OutputTruncated, match="max_tokens=384"):
         asyncio.run(gateway.acomplete(MESSAGES, max_tokens=384))
     assert calls == ["gemini"]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_truncation_at_every_default_cap_is_not_reported_as_an_outage(wire, stream):
+    """No named budget: each tier's own cap is tried, and the last word is still truncation."""
+    _, client, modes, calls, _, _ = wire
+    modes.update({name: "truncate" for name in DEFAULT_CHAIN})
+    request = {key: value for key, value in PAYLOAD.items() if key != "max_completion_tokens"}
+    response = client.post("/v1/chat/completions", json={**request, "stream": stream})
+    assert "providers_exhausted" not in response.text
+    assert "stream_interrupted" not in response.text
+    if stream:
+        assert response.status_code == 200, response.text
+        assert '"code": "output_truncated"' in response.text
+        assert "[DONE]" not in response.text
+    else:
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "output_truncated"
+        assert calls == list(DEFAULT_CHAIN)
 
 
 @pytest.mark.parametrize("stream", [False, True])
