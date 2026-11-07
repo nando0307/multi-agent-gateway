@@ -116,8 +116,12 @@ async def cancel_on_disconnect(request, operation):
     task = asyncio.create_task(operation)
 
     async def disconnected():
-        while not await request.is_disconnected():
-            await asyncio.sleep(0.05)
+        # Await the ASGI receive directly: Starlette's is_disconnected() awaits inside an
+        # already-cancelled anyio CancelScope, which can swallow this task's cancellation
+        # and leave it parked on a receive that never arrives, so joining it below hangs
+        # the response for a client that is still connected.
+        while (await request.receive()).get("type") != "http.disconnect":
+            pass
 
     monitor = asyncio.create_task(disconnected())
     try:
