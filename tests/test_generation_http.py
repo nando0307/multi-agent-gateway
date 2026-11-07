@@ -15,7 +15,7 @@ from fastapi import FastAPI
 
 from gateway.generation import generation_router
 from gateway.llm.model_list import DEFAULT_CHAIN
-from gateway.llm.router import AllProvidersExhausted, Gateway, GenerationDeadline
+from gateway.llm.router import AllProvidersExhausted, Gateway, GenerationDeadline, OutputTruncated
 from gateway.settings import Settings
 
 
@@ -283,6 +283,21 @@ def test_non_json_numeric_constants_are_rejected(wire):
     response = client.post("/v1/chat/completions", json={**PAYLOAD, "response_format": score_schema})
     assert response.status_code == 502, response.text
     assert response.json()["error"]["code"] == "invalid_completion"
+
+
+def test_truncation_is_terminal_only_when_the_request_named_a_cap(wire):
+    """A provider's own default cap must not abort a research call that named no budget."""
+    gateway, _, modes, calls, _, _ = wire
+    modes["gemini"] = "truncate"
+    assert asyncio.run(gateway.acomplete(MESSAGES)).served_by == "openrouter"
+    assert calls == ["gemini", "openrouter"]
+    modes.update({name: "truncate" for name in DEFAULT_CHAIN})
+    with pytest.raises(AllProvidersExhausted):
+        asyncio.run(gateway.acomplete(MESSAGES))
+    calls.clear()
+    with pytest.raises(OutputTruncated, match="max_tokens=384"):
+        asyncio.run(gateway.acomplete(MESSAGES, max_tokens=384))
+    assert calls == ["gemini"]
 
 
 @pytest.mark.parametrize("stream", [False, True])

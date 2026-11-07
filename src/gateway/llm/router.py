@@ -58,11 +58,9 @@ class InvalidCompletion(RuntimeError):
 class OutputTruncated(RuntimeError):
     """A healthy provider answered until the request's own output cap."""
 
-    def __init__(self, max_tokens=None):
+    def __init__(self, max_tokens):
         self.max_tokens = max_tokens
-        detail = (f"Output truncated at the requested max_tokens={max_tokens}" if max_tokens
-                  else "Output truncated by the requested output budget")
-        super().__init__(detail)
+        super().__init__(f"Output truncated at the requested max_tokens={max_tokens}")
 
 
 class GenerationRefused(RuntimeError):
@@ -259,8 +257,8 @@ class Gateway:
                         choice = response.choices[0]
                         if choice.finish_reason == "content_filter" or getattr(choice.message, "refusal", None):
                             raise GenerationRefused("Provider refused generation")
-                        if choice.finish_reason == "length":
-                            raise OutputTruncated(kwargs.get("max_tokens"))
+                        if choice.finish_reason == "length" and kwargs.get("max_tokens") is not None:
+                            raise OutputTruncated(kwargs["max_tokens"])
                         if choice.finish_reason not in ("stop", "tool_calls", "function_call"):
                             raise IncompleteCompletion("Provider did not complete the answer")
                         text = choice.message.content or ""
@@ -371,8 +369,8 @@ class Gateway:
                         # LiteLLM synthesizes stop on clean EOF. Require adapter evidence.
                         if not getattr(stream, "received_finish_reason", None):
                             raise IncompleteCompletion("Upstream stream ended without a terminal marker")
-                        if choice.finish_reason == "length":
-                            raise OutputTruncated(kwargs.get("max_tokens"))
+                        if choice.finish_reason == "length" and kwargs.get("max_tokens") is not None:
+                            raise OutputTruncated(kwargs["max_tokens"])
                         if choice.finish_reason != "stop":
                             raise IncompleteCompletion("Provider did not complete the answer")
                         terminal = chunk.model_copy(deep=True)
