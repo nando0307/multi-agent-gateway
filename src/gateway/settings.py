@@ -115,7 +115,10 @@ class Settings(BaseSettings):
     # --- behaviour ---------------------------------------------------------------
     # Provider timeout default; generation attempt and total budgets always cap it.
     request_timeout_s: float = 45.0
-    allowed_fails: int = 3
+    # Not litellm's default of 3: that value is indistinguishable from "unset" there, which
+    # switches the Router to its error-rate policy, where a single-deployment group only
+    # cools after 1000 requests -- i.e. never during a real outage.
+    allowed_fails: int = 2
     cooldown_time_s: int = 60
     gate_threshold: float = 0.70
 

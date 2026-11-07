@@ -157,7 +157,7 @@ def test_http_transient_fallback_preserves_budget(wire, mode):
     assert all(body["max_tokens"] == 384 and body["messages"] == MESSAGES for body in bodies)
 
 
-@pytest.mark.parametrize("mode,status,code", [(400, 400, "invalid_request"), (401, 502, "provider_configuration"),
+@pytest.mark.parametrize("mode,status,code", [(400, 400, "invalid_request"),
                                               ("refusal", 400, "generation_refused")])
 def test_terminal_failures_do_not_fallback(wire, mode, status, code):
     _, client, modes, calls, _, _ = wire
@@ -166,6 +166,17 @@ def test_terminal_failures_do_not_fallback(wire, mode, status, code):
     assert response.status_code == status, response.text
     assert response.json()["error"]["code"] == code
     assert calls == ["gemini"]
+
+
+@pytest.mark.parametrize("mode", [401, 403])
+def test_provider_credentials_rejected_advances_to_a_healthy_tier(wire, mode):
+    """A revoked key or a disabled API is a provider outage, not a caller error."""
+    _, client, modes, calls, _, _ = wire
+    modes["gemini"] = mode
+    response = client.post("/v1/chat/completions", json=PAYLOAD)
+    assert response.status_code == 200, response.text
+    assert response.headers["x-gateway-provider"] == "openrouter"
+    assert calls == ["gemini", "openrouter"]
 
 
 def test_auth_and_required_features_rejected_before_provider(wire):
@@ -180,15 +191,38 @@ def test_auth_and_required_features_rejected_before_provider(wire):
 @pytest.mark.parametrize("wire", ["openai/gpt-4o-mini", "openai/gpt-3.5-turbo"], indirect=True)
 def test_schema_output_is_validated(wire):
     _, client, modes, calls, _, _ = wire
-    response = client.post("/v1/chat/completions", json={**PAYLOAD, "response_format": SCHEMA})
+    request = {**PAYLOAD, "response_format": SCHEMA}
+    response = client.post("/v1/chat/completions", json=request)
     assert response.status_code == 200, response.text
     assert json.loads(response.json()["choices"][0]["message"]["content"]) == {"department": "hr"}
     modes["gemini"] = "bad_json"
     calls.clear()
+    response = client.post("/v1/chat/completions", json=request)
+    assert response.status_code == 200, response.text
+    assert json.loads(response.json()["choices"][0]["message"]["content"]) == {"department": "hr"}
+    assert response.headers["x-gateway-provider"] == "openrouter"
+    assert calls == ["gemini", "openrouter"]
+
+
+def test_malformed_structured_output_surfaces_when_no_schema_tier_succeeds(wire):
+    """All-eligible tiers answering off-schema must report the schema failure, not prose."""
+    _, client, modes, calls, _, _ = wire
+    modes.update({name: "bad_json" for name in DEFAULT_CHAIN})
     response = client.post("/v1/chat/completions", json={**PAYLOAD, "response_format": SCHEMA})
-    assert response.status_code == 502
+    assert response.status_code == 502, response.text
     assert response.json()["error"]["code"] == "invalid_completion"
-    assert calls == ["gemini"]
+    assert calls == list(DEFAULT_CHAIN)
+
+
+def test_research_callers_keep_their_own_budget(wire):
+    """Boss's 60 s deadline must not reach the pre-existing research callers."""
+    gateway, client, modes, calls, _, _ = wire
+    gateway.settings.generation_deadline_s = 0.1
+    gateway.settings.generation_attempt_s = 5
+    modes["gemini"] = "slow"
+    with pytest.raises(GenerationDeadline):
+        asyncio.run(gateway.acomplete(MESSAGES))
+    assert gateway.complete(MESSAGES).served_by == "gemini"
 
 
 @pytest.mark.parametrize("mode,expected", [("ok", ["gemini"]), ("pre_eof", ["gemini", "openrouter"]),
@@ -247,15 +281,17 @@ def test_total_deadline_does_not_restart_per_provider(wire):
 
 
 def test_structured_stream_never_exposes_invalid_json(wire):
-    _, client, modes, _, _, _ = wire
+    _, client, modes, calls, _, _ = wire
     request = {**PAYLOAD, "stream": True, "response_format": SCHEMA}
     response = client.post("/v1/chat/completions", json=request)
     assert "[DONE]" in response.text
-    modes["gemini"] = "bad_json"
+    calls.clear()
+    modes.update({name: "bad_json" for name in DEFAULT_CHAIN})
     response = client.post("/v1/chat/completions", json=request)
     assert "invalid_completion" in response.text
     assert "department" not in response.text
     assert "[DONE]" not in response.text
+    assert calls == list(DEFAULT_CHAIN)
 
 
 def test_a_slow_structured_answer_is_not_abandoned_mid_stream(wire):

@@ -76,17 +76,20 @@ class AllProvidersExhausted(RuntimeError):
 def retryable(exc: Exception) -> bool:
     # Normalized safety/input errors win over an ambiguous upstream HTTP status.
     if isinstance(exc, (litellm.BadRequestError, litellm.ContentPolicyViolationError,
-                        litellm.AuthenticationError, litellm.PermissionDeniedError,
-                        GenerationRefused, InvalidCompletion)):
+                        GenerationRefused)):
         return False
     if isinstance(exc, (EmptyCompletion, IncompleteCompletion, TimeoutError,
                         litellm.APIConnectionError, litellm.Timeout, litellm.RateLimitError,
-                        litellm.RouterRateLimitError, litellm.RouterRateLimitErrorBasic)):
+                        litellm.AuthenticationError, litellm.PermissionDeniedError,
+                        litellm.RouterRateLimitError, litellm.RouterRateLimitErrorBasic,
+                        InvalidCompletion)):
         # Router cooldown errors are ValueErrors carrying no status code: the pinned
         # deployment has no healthy entries left, which is a provider outage, not a
         # client error.
         return True
-    return getattr(exc, "status_code", None) in (429, 500, 502, 503, 504)
+    # Upstream 401/403 reach some adapters as a generic APIError, so classify by status
+    # too: a provider rejecting its own credentials is an outage, not a caller error.
+    return getattr(exc, "status_code", None) in (401, 403, 429, 500, 502, 503, 504)
 
 
 def validate_content(text: str, response_format: dict | None) -> None:
@@ -135,37 +138,50 @@ class Gateway:
         defaults["num_retries"] = 0
         self.router = _GenerationRouter(**defaults)
 
-    def _providers(self, model):
+    def _providers(self, model, response_format=None):
         if model in (PRIMARY_ALIAS, *BOSS_ALIASES):
-            return self.chain if self.router.fallbacks else self.chain[:1]
-        if model not in self.chain:
+            providers = self.chain if self.router.fallbacks else self.chain[:1]
+        elif model in self.chain:
+            providers = (model,)
+        else:
             raise ValueError("Unknown model alias")
-        return (model,)
+        if not response_format or response_format.get("type") != "json_schema":
+            return providers
+        eligible = tuple(p for p in providers if self._satisfies_schema(p))
+        if not eligible:
+            raise ValueError("Configured model does not support required JSON output")
+        return eligible
 
-    def _options(self, provider, messages, kwargs, remaining):
+    def _satisfies_schema(self, provider) -> bool:
+        target = next(e for e in self.model_list
+                      if e["model_name"] == provider)["litellm_params"]["model"]
+        if litellm.supports_response_schema(model=target):
+            return True
+        return "response_format" in (litellm.get_supported_openai_params(model=target) or [])
+
+    def _options(self, provider, messages, kwargs, remaining, attempt_s=None):
         entry = next(e for e in self.model_list if e["model_name"] == provider)
         params = entry["litellm_params"]
         options = dict(kwargs)
         response_format = options.get("response_format")
         if response_format and response_format.get("type") == "json_schema":
-            target = params["model"]
-            if not litellm.supports_response_schema(model=target):
-                supported = litellm.get_supported_openai_params(model=target) or []
-                if "response_format" not in supported:
-                    raise ValueError("Configured model does not support required JSON output")
+            if not litellm.supports_response_schema(model=params["model"]):
                 # JSON-mode providers still must pass the exact local schema validator.
                 messages = [{"role": "system", "content": "Return only JSON matching this schema: "
                              + json.dumps(response_format["json_schema"]["schema"])}, *messages]
                 options["response_format"] = {"type": "json_object"}
-        timeout = min(remaining, self.settings.generation_attempt_s,
+        attempt_s = self.settings.generation_attempt_s if attempt_s is None else attempt_s
+        timeout = min(remaining, attempt_s,
                       params.get("timeout", self.settings.request_timeout_s))
         options.update(timeout=timeout, num_retries=0, max_retries=0,
                        disable_fallbacks=True, drop_params=False)
         return messages, options, timeout
 
     def complete(self, messages, *, model=PRIMARY_ALIAS, **kwargs):
-        """Blocking facade; async callers must use acomplete/astream."""
-        future = _completion_portal().start_task_soon(partial(self._acomplete, messages, model=model, **kwargs))
+        """Blocking facade for the research path; async callers must use acomplete/astream."""
+        future = _completion_portal().start_task_soon(partial(
+            self._acomplete, messages, model=model, deadline_s=None,
+            attempt_s=self.settings.request_timeout_s, **kwargs))
         try:
             return future.result()
         except AllProvidersExhausted:
@@ -178,24 +194,30 @@ class Gateway:
             future.cancel()
 
     async def acomplete(self, messages, *, model=PRIMARY_ALIAS, **kwargs):
-        future = _completion_portal().start_task_soon(partial(self._acomplete, messages, model=model, **kwargs))
+        future = _completion_portal().start_task_soon(partial(
+            self._acomplete, messages, model=model,
+            deadline_s=self.settings.generation_deadline_s,
+            attempt_s=self.settings.generation_attempt_s, **kwargs))
         try:
             return await asyncio.wrap_future(future)
         finally:
             future.cancel()
 
-    async def _acomplete(self, messages, *, model=PRIMARY_ALIAS, **kwargs):
+    async def _acomplete(self, messages, *, model=PRIMARY_ALIAS, deadline_s=None, attempt_s=None,
+                         **kwargs):
         if kwargs.pop("stream", False):
             raise ValueError("Use astream for streaming generation")
         started, call_id, attempts = time.monotonic(), uuid.uuid4().hex[:8], []
         cause = None
         try:
-            async with asyncio.timeout(self.settings.generation_deadline_s):
-                for provider in self._providers(model):
+            async with asyncio.timeout(deadline_s):
+                for provider in self._providers(model, kwargs.get("response_format")):
                     attempt_start = time.monotonic()
-                    remaining = self.settings.generation_deadline_s - (attempt_start - started)
+                    remaining = (float("inf") if deadline_s is None
+                                 else deadline_s - (attempt_start - started))
                     try:
-                        prompt, options, timeout = self._options(provider, messages, kwargs, remaining)
+                        prompt, options, timeout = self._options(provider, messages, kwargs,
+                                                                remaining, attempt_s)
                         async with asyncio.timeout(timeout):
                             response = await self.router.acompletion(model=provider, messages=prompt, **options)
                         choice = response.choices[0]
@@ -221,6 +243,8 @@ class Gateway:
                     depth = self.chain.index(provider)
                     self._record_call(call_id, model, provider, depth, elapsed, attempts, usage=response.usage)
                     return CallResult(text, provider, depth, attempts, elapsed, response, response.usage)
+                if isinstance(cause, InvalidCompletion):
+                    raise cause
                 raise AllProvidersExhausted(model, attempts, cause) from cause
         except TimeoutError as exc:
             self._record_call(call_id, model, None, 0, (time.monotonic()-started)*1000,
@@ -266,7 +290,7 @@ class Gateway:
         started = time.monotonic()
         attempts, cause = [], None
         committed = False
-        for provider in self._providers(model):
+        for provider in self._providers(model, kwargs.get("response_format")):
             stream = None
             attempt_start = time.monotonic()
             remaining = self.settings.generation_deadline_s - (attempt_start - started)
@@ -345,6 +369,8 @@ class Gateway:
             finally:
                 if stream is not None:
                     await stream.aclose()
+        if isinstance(cause, InvalidCompletion):
+            raise cause
         raise AllProvidersExhausted(model, attempts, cause) from cause
 
     @staticmethod

@@ -99,7 +99,7 @@ def build_schedules(n, p, model, rng, local_fail: float) -> dict[str, list[bool]
 
 # --------------------------------------------------------------------------- gateway
 def make_arm(chain: tuple[str, ...], *, fallbacks: bool) -> Gateway:
-    settings = make_settings(allowed_fails=3, cooldown_time_s=30)
+    settings = make_settings(cooldown_time_s=30)
 
     def params(name: str) -> dict:
         return {"model": "openai/gpt-4o-mini", "api_key": "sk-test", "mock_response": "ok"}

@@ -17,7 +17,7 @@ import pytest
 
 from gateway.llm.events import trace_run
 from gateway.llm.router import AllProvidersExhausted, Gateway
-from tests.conftest import EMPTY, FAIL_429, FAIL_500, DEFAULT_CHAIN, make_gateway, make_settings
+from tests.conftest import EMPTY, FAIL_429, FAIL_500, DEFAULT_CHAIN, make_gateway
 
 
 def test_healthy_primary_serves_at_depth_zero(messages):
@@ -84,17 +84,19 @@ def test_every_provider_cooled_is_exhaustion_not_a_client_error(messages):
 
 
 def test_the_shipped_model_list_lets_the_router_cool_a_dead_provider(messages):
-    """allowed_fails/cooldown_time_s must bind on the real config, not just in fixtures.
+    """allowed_fails/cooldown_time_s must bind on the shipped config, not just in fixtures.
 
-    LiteLLM resolves a call whose model name equals a deployment id as that specific
-    deployment, skipping the cooldown filter entirely -- so the shipped ids must stay
-    distinct from the model-group names.
+    LiteLLM treats its own default ``allowed_fails`` (3) as "unset" and switches to a
+    policy where a single-deployment group only cools after 1000 requests, and it treats a
+    model name that equals a deployment id as that one specific deployment, skipping the
+    cooldown filter entirely. Both would leave a dead primary re-attempted forever.
     """
     from gateway.llm.model_list import build_model_list
+    from gateway.settings import Settings
 
-    settings = make_settings()
+    settings = Settings(_env_file=None, gemini_api_key="k", openrouter_api_key="k")
     model_list, chain = build_model_list(settings)
-    assert chain[0] == "gemini"
+    assert chain == ("gemini", "openrouter")
     for entry in model_list:
         entry["litellm_params"] = {
             "model": "openai/gpt-4o-mini", "api_key": "sk-test-not-real",
@@ -103,7 +105,7 @@ def test_the_shipped_model_list_lets_the_router_cool_a_dead_provider(messages):
         }
     gw = Gateway(settings=settings, model_list=model_list)
     errors = []
-    for _ in range(5):
+    for _ in range(6):
         result = gw.complete(messages)
         assert result.served_by == "openrouter", result.attempts
         errors.extend(attempt.error_class for attempt in result.attempts)

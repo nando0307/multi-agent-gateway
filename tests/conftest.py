@@ -47,7 +47,6 @@ def make_settings(**overrides) -> Settings:
         openrouter_api_key="test-openrouter",
         request_timeout_s=5.0,
         cooldown_time_s=60,
-        allowed_fails=1,
     )
     base.update(overrides)
     return Settings(_env_file=None, **base)

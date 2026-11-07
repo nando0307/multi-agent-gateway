@@ -166,12 +166,19 @@ own p95 converts normal tail latency into failover. Once a stream has emitted co
 attempt is no longer bounded by that window, only by the remaining total budget, so a
 slow-but-progressing answer is finished rather than cut mid-stream.
 There are no nested retries or per-provider full-deadline resets. Connection failures,
-timeouts, 429 and 500/502/503/504 advance to backups; a provider LiteLLM has placed in
-cooldown (no healthy deployments) advances too; invalid requests, context errors,
-safety refusals, invalid schema output and credential errors do not. Blank completions
-and pre-content incomplete streams also advance. All-blank exhaustion is 503.
+timeouts, 429 and 500/502/503/504 advance to backups; so do a provider LiteLLM has placed
+in cooldown (no healthy deployments), a provider rejecting its own credentials (401/403),
+and a provider returning malformed structured output -- the last only to remaining tiers
+that can satisfy the schema, after which the structured-output failure is returned
+instead of prose. Caller-side invalid requests, context-window errors and safety refusals
+do not advance. Blank completions and pre-content incomplete streams also advance.
+All-blank exhaustion is 503.
 Lower timeouts can manufacture failover under normal provider latency; tune against
 measured latency, not intuition. Four enabled providers are not four independent infrastructure paths.
+
+The research path (`gateway research`, planner, synthesizer and the quality-gate retry)
+keeps its own budget: `REQUEST_TIMEOUT_S` per attempt, no total deadline. The 60-second
+budget above belongs to Boss generation only.
 
 Errors never include upstream response bodies, credentials or prompt contents:
 
@@ -180,7 +187,6 @@ Errors never include upstream response bodies, credentials or prompt contents:
 | 400 | `invalid_request` | Unsupported/invalid input or schema |
 | 400 | `generation_refused` | Provider safety refusal; no fallback |
 | 401 | `authentication_error` | Invalid service Bearer token |
-| 502 | `provider_configuration` | Upstream credential/permission error |
 | 502 | `invalid_completion` | Output failed required schema |
 | 502 | `stream_interrupted` | Truncated or interrupted answer |
 | 502 | `generation_failed` | Other non-retryable provider failure |

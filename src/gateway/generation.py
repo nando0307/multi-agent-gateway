@@ -94,8 +94,6 @@ def error_response(exc, *, streaming=False):
         status, code = 400, "generation_refused"
     elif isinstance(exc, (ValidationError, SchemaError, ValueError, litellm.BadRequestError)):
         status, code = 400, "invalid_request"
-    elif isinstance(exc, (litellm.AuthenticationError, litellm.PermissionDeniedError)):
-        status, code = 502, "provider_configuration"
     elif isinstance(exc, InvalidCompletion):
         status, code = 502, "invalid_completion"
     elif isinstance(exc, AllProvidersExhausted):
