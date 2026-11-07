@@ -48,11 +48,21 @@ class EmptyCompletion(RuntimeError):
 
 
 class IncompleteCompletion(RuntimeError):
-    """Missing terminal marker or output budget exhausted."""
+    """Missing terminal marker or an unfinished answer."""
 
 
 class InvalidCompletion(RuntimeError):
     """Provider output does not satisfy the requested schema."""
+
+
+class OutputTruncated(RuntimeError):
+    """A healthy provider answered until the request's own output cap."""
+
+    def __init__(self, max_tokens=None):
+        self.max_tokens = max_tokens
+        detail = (f"Output truncated at the requested max_tokens={max_tokens}" if max_tokens
+                  else "Output truncated by the requested output budget")
+        super().__init__(detail)
 
 
 class GenerationRefused(RuntimeError):
@@ -76,7 +86,7 @@ class AllProvidersExhausted(RuntimeError):
 def retryable(exc: Exception) -> bool:
     # Normalized safety/input errors win over an ambiguous upstream HTTP status.
     if isinstance(exc, (litellm.BadRequestError, litellm.ContentPolicyViolationError,
-                        GenerationRefused)):
+                        GenerationRefused, OutputTruncated)):
         return False
     if isinstance(exc, (EmptyCompletion, IncompleteCompletion, TimeoutError,
                         litellm.APIConnectionError, litellm.Timeout, litellm.RateLimitError,
@@ -212,7 +222,7 @@ class Gateway:
         future = _completion_portal().start_task_soon(partial(self._acomplete, messages, model=model, **kwargs))
         try:
             return future.result()
-        except AllProvidersExhausted:
+        except (AllProvidersExhausted, OutputTruncated):
             raise
         except Exception as exc:
             # One normalised failure for every routed-provider failure, which is what the
@@ -249,6 +259,8 @@ class Gateway:
                         choice = response.choices[0]
                         if choice.finish_reason == "content_filter" or getattr(choice.message, "refusal", None):
                             raise GenerationRefused("Provider refused generation")
+                        if choice.finish_reason == "length":
+                            raise OutputTruncated(kwargs.get("max_tokens"))
                         if choice.finish_reason not in ("stop", "tool_calls", "function_call"):
                             raise IncompleteCompletion("Provider did not complete the answer")
                         text = choice.message.content or ""
@@ -359,6 +371,8 @@ class Gateway:
                         # LiteLLM synthesizes stop on clean EOF. Require adapter evidence.
                         if not getattr(stream, "received_finish_reason", None):
                             raise IncompleteCompletion("Upstream stream ended without a terminal marker")
+                        if choice.finish_reason == "length":
+                            raise OutputTruncated(kwargs.get("max_tokens"))
                         if choice.finish_reason != "stop":
                             raise IncompleteCompletion("Provider did not complete the answer")
                         terminal = chunk.model_copy(deep=True)

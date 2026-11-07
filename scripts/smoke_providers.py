@@ -41,14 +41,21 @@ def main() -> int:
                 print(f"{name}: disabled (missing credentials)")
                 continue
             gateway = Gateway(settings=settings, chain=(name,))
+            failures = []
             try:
                 gateway.complete(PROMPT, model=name, max_tokens=128)
+            except Exception as exc:
+                failures.append(f"text FAILED ({type(exc).__name__}: {str(exc)[:160]})")
+            try:
                 gateway.complete([{"role": "user", "content": 'Return JSON {"ready": true}.'}],
                                  model=name, max_tokens=128, response_format=schema)
+            except Exception as exc:
+                failures.append(f"schema FAILED ({type(exc).__name__}: {str(exc)[:160]})")
+            if failures:
+                print(f"{name}: " + "; ".join(failures))
+            else:
                 print(f"{name}: text and validated schema OK ({params['model']})")
                 ok += 1
-            except Exception as exc:
-                print(f"{name}: FAILED ({type(exc).__name__})")
         return 0 if ok == len(DEFAULT_CHAIN) else 1
 
     print(f"{'provider':<12} {'status':<8} {'latency':>9}  detail")

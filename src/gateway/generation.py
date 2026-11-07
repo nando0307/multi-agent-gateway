@@ -16,7 +16,7 @@ from starlette.requests import ClientDisconnect
 from gateway.llm.model_list import BOSS_ALIASES
 from gateway.llm.router import (
     AllProvidersExhausted, GenerationDeadline, GenerationRefused, IncompleteCompletion,
-    InvalidCompletion,
+    InvalidCompletion, OutputTruncated,
 )
 
 
@@ -88,8 +88,11 @@ class ChatRequest(StrictModel):
 
 
 def error_response(exc, *, streaming=False):
+    message = None
     if isinstance(exc, GenerationDeadline):
         status, code = 504, "generation_deadline"
+    elif isinstance(exc, OutputTruncated):
+        status, code, message = 400, "output_truncated", str(exc)
     elif isinstance(exc, GenerationRefused) or isinstance(exc, litellm.ContentPolicyViolationError):
         status, code = 400, "generation_refused"
     elif isinstance(exc, (ValidationError, SchemaError, ValueError, litellm.BadRequestError)):
@@ -102,7 +105,7 @@ def error_response(exc, *, streaming=False):
         status, code = 502, "stream_interrupted"
     else:
         status, code = 502, "generation_failed"
-    return status, {"error": {"message": code.replace("_", " "), "type": code, "code": code}}
+    return status, {"error": {"message": message or code.replace("_", " "), "type": code, "code": code}}
 
 
 async def cancel_on_disconnect(request, operation):

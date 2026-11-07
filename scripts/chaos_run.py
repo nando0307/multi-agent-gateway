@@ -287,7 +287,7 @@ def main() -> int:
         "latency.",
         "* Provider outages are modelled as independent across providers. Correlated failure "
         "(a shared upstream) is mitigated by choosing an OpenRouter model from a different "
-        "vendor than Gemini/NIM, not by this experiment.",
+        "vendor than Gemini, Groq and DeepSeek, not by this experiment.",
         "* All four tiers are cloud providers, so a correlated outage (shared upstream, "
         "shared region) would take more of the chain than this independent-failure model "
         "assumes. The previous version of this study had a local tier that could not "

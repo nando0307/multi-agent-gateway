@@ -51,6 +51,7 @@ def wire(request):
                     "type": "invalid_request_error" if mode == 400 else "api_error"}}).encode())
                 return
             content = "   " if mode == "empty" else "answer from " + provider
+            finish = {"refusal": "content_filter", "truncate": "length"}.get(mode, "stop")
             if body.get("response_format"):
                 content = '{"department":"hr"}'
                 if mode == "bad_json":
@@ -86,12 +87,12 @@ def wire(request):
                         for _ in range(100):
                             time.sleep(0.01)
                             send({"content": "."})
-                    send({}, "content_filter" if mode == "refusal" else "stop")
+                    send({}, finish)
                     self.wfile.write(b"data: [DONE]\n\n")
                 else:
                     self.wfile.write(json.dumps({**base, "object": "chat.completion",
                         "choices": [{"index": 0, "message": {"role": "assistant", "content": content},
-                                     "finish_reason": "content_filter" if mode == "refusal" else "stop"}],
+                                     "finish_reason": finish}],
                         "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10}}).encode())
             except (BrokenPipeError, ConnectionResetError):
                 closed.set()
@@ -282,6 +283,27 @@ def test_non_json_numeric_constants_are_rejected(wire):
     response = client.post("/v1/chat/completions", json={**PAYLOAD, "response_format": score_schema})
     assert response.status_code == 502, response.text
     assert response.json()["error"]["code"] == "invalid_completion"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_output_truncation_is_a_request_budget_error_not_an_outage(wire, stream):
+    """A healthy provider answering to the requested cap must not fail over or look down."""
+    _, client, modes, calls, _, _ = wire
+    modes["gemini"] = "truncate"
+    response = client.post("/v1/chat/completions", json={**PAYLOAD, "stream": stream})
+    assert calls == ["gemini"], "truncation must not advance the chain"
+    assert "providers_exhausted" not in response.text
+    assert "stream_interrupted" not in response.text
+    if stream:
+        assert response.status_code == 200, response.text
+        assert '"code": "output_truncated"' in response.text
+        assert "max_tokens=384" in response.text
+        assert "[DONE]" not in response.text
+    else:
+        assert response.status_code == 400, response.text
+        error = response.json()["error"]
+        assert error["code"] == "output_truncated"
+        assert "max_tokens=384" in error["message"]
 
 
 @pytest.mark.parametrize("mode,expected", [("ok", ["gemini"]), ("pre_eof", ["gemini", "openrouter"]),

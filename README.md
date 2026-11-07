@@ -172,7 +172,10 @@ and a provider returning malformed structured output -- the last only to remaini
 that can satisfy the schema, after which the structured-output failure is returned
 instead of prose. Caller-side invalid requests, context-window errors and safety refusals
 do not advance. Blank completions and pre-content incomplete streams also advance.
-All-blank exhaustion is 503.
+All-blank exhaustion is 503. A provider answering until the request's own output cap
+(`finish_reason` `length`) is a budget condition, not a provider failure: it is terminal
+for the request on both paths, never advances to a backup, and is reported as
+`400 output_truncated` naming the requested token budget.
 A provider whose attempt window expires without producing content is put into LiteLLM's
 deployment cooldown immediately, as is a provider still in flight when the shared budget
 runs out, so a sustained hang costs one attempt window rather than blocking the chain for
@@ -190,9 +193,10 @@ Errors never include upstream response bodies, credentials or prompt contents:
 |---|---|---|
 | 400 | `invalid_request` | Unsupported/invalid input or schema |
 | 400 | `generation_refused` | Provider safety refusal; no fallback |
+| 400 | `output_truncated` | Provider hit the requested output cap; retry with a larger budget |
 | 401 | `authentication_error` | Invalid service Bearer token |
 | 502 | `invalid_completion` | Output failed required schema |
-| 502 | `stream_interrupted` | Truncated or interrupted answer |
+| 502 | `stream_interrupted` | Stream ended without a terminal marker |
 | 502 | `generation_failed` | Other non-retryable provider failure |
 | 503 | `providers_exhausted` | All available approved tiers failed |
 | 503 | `service_unavailable` | Service token not configured |
