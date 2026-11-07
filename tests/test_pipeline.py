@@ -150,6 +150,13 @@ def _offline_runner(**kwargs):
     return build_runner(resolve_dns=False, search_fn=fake_search, fetch_fn=fake_fetch)
 
 
+class ExplodingGate:
+    """A judge/workflow failure: not a provider failure."""
+
+    def apply(self, *args, **kwargs):
+        raise RuntimeError("judge exploded")
+
+
 def test_research_path_normalises_provider_failures_into_exhaustion():
     """Callers were written against one failure mode: every provider failed."""
     with pytest.raises(AllProvidersExhausted):
@@ -158,10 +165,6 @@ def test_research_path_normalises_provider_failures_into_exhaustion():
 
 def test_research_path_lets_non_provider_failures_through():
     """A judge/internal failure is not provider exhaustion and must stay visible."""
-    class ExplodingGate:
-        def apply(self, *args, **kwargs):
-            raise RuntimeError("judge exploded")
-
     with pytest.raises(RuntimeError, match="judge exploded"):
         run_research("How much solar was added in 2023?", FakeGateway(), _offline_runner(),
                      gate=ExplodingGate())
@@ -192,3 +195,32 @@ def test_research_endpoint_maps_provider_failures_to_503(monkeypatch):
     monkeypatch.setattr(api, "build_runner", lambda **kwargs: _offline_runner())
     response = TestClient(api.app).post("/research", json={"question": "How much solar was added?"})
     assert response.status_code == 503
+
+
+def test_research_cli_does_not_relabel_internal_failures(monkeypatch):
+    from gateway import cli
+
+    monkeypatch.setattr(cli, "build_gateway", lambda settings: FakeGateway())
+    monkeypatch.setattr(cli, "build_runner", lambda **kwargs: _offline_runner())
+    monkeypatch.setattr(cli, "QualityGate", lambda *args, **kwargs: ExplodingGate())
+    monkeypatch.setattr(sys, "argv", ["gateway", "research", "How much solar was added?",
+                                      "--no-judge"])
+    with pytest.raises(RuntimeError, match="judge exploded"):
+        cli.main()
+
+
+def test_research_endpoint_does_not_relabel_internal_failures(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini")
+    from gateway.settings import get_settings
+
+    get_settings.cache_clear()
+    import gateway.api as api
+
+    monkeypatch.setattr(api, "_gateway", FakeGateway())
+    monkeypatch.setattr(api, "build_runner", lambda **kwargs: _offline_runner())
+    monkeypatch.setattr(api, "QualityGate", lambda *args, **kwargs: ExplodingGate())
+    exhausted = api.METRICS["exhausted"]
+    response = TestClient(api.app, raise_server_exceptions=False).post(
+        "/research", json={"question": "How much solar was added?"})
+    assert response.status_code == 500, response.text
+    assert api.METRICS["exhausted"] == exhausted
