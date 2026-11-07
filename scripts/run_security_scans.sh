@@ -12,7 +12,7 @@ bandit_status=${PIPESTATUS[0]}
 
 echo
 echo "== pip-audit =="
-.venv/bin/pip-audit --progress-spinner off 2>&1 | tee results/pip_audit.txt
+PYTHON=.venv/bin/python bash scripts/audit_deps.sh 2>&1 | tee results/pip_audit.txt
 # Captured the same way as bandit's, rather than discarded with `|| true`. There is no
 # `set -e` here, so the old `|| true` bought nothing except throwing the status away --
 # which made results/pip_audit.txt evidence of a scan that could never fail.

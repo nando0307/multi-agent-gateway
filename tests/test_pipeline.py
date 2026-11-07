@@ -21,7 +21,7 @@ from gateway.eval.gate import QualityGate
 from gateway.llm.router import AllProvidersExhausted
 from gateway.security.scope import RunBudget
 from gateway.tools.web_search import SearchHit
-from tests.conftest import DEFAULT_CHAIN, FAIL_CONTEXT, make_gateway
+from tests.conftest import DEFAULT_CHAIN, FAIL_CONTEXT, make_gateway, make_settings
 
 SOLAR_PAGE = (
     "Global solar photovoltaic capacity additions reached 447 GW in 2023, according to the "
@@ -150,6 +150,20 @@ def _offline_runner(**kwargs):
     return build_runner(resolve_dns=False, search_fn=fake_search, fetch_fn=fake_fetch)
 
 
+def _offline_api(monkeypatch):
+    """Import the app against configured *fake* providers.
+
+    ``gateway.api`` builds its gateway at import time, which refuses to start with no
+    provider at all. Configure the same stand-ins the rest of the suite uses rather than
+    exporting a key-shaped environment name, which would make this file look like it
+    reaches the network (CI greps for exactly those names).
+    """
+    monkeypatch.setattr("gateway.settings.get_settings", make_settings)
+    import gateway.api as api
+
+    return api
+
+
 class ExplodingGate:
     """A judge/workflow failure: not a provider failure."""
 
@@ -185,12 +199,7 @@ def test_research_cli_reports_the_failure_instead_of_crashing(monkeypatch):
 
 
 def test_research_endpoint_maps_provider_failures_to_503(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini")
-    from gateway.settings import get_settings
-
-    get_settings.cache_clear()
-    import gateway.api as api
-
+    api = _offline_api(monkeypatch)
     monkeypatch.setattr(api, "_gateway", _refusing_gateway())
     monkeypatch.setattr(api, "build_runner", lambda **kwargs: _offline_runner())
     response = TestClient(api.app).post("/research", json={"question": "How much solar was added?"})
@@ -210,12 +219,7 @@ def test_research_cli_does_not_relabel_internal_failures(monkeypatch):
 
 
 def test_research_endpoint_does_not_relabel_internal_failures(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini")
-    from gateway.settings import get_settings
-
-    get_settings.cache_clear()
-    import gateway.api as api
-
+    api = _offline_api(monkeypatch)
     monkeypatch.setattr(api, "_gateway", FakeGateway())
     monkeypatch.setattr(api, "build_runner", lambda **kwargs: _offline_runner())
     monkeypatch.setattr(api, "QualityGate", lambda *args, **kwargs: ExplodingGate())

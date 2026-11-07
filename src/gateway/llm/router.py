@@ -134,9 +134,12 @@ class CallResult:
 
 
 class _GenerationRouter(Router):
-    async def _acompletion_streaming_iterator(self, model_response, messages, initial_kwargs):
-        # LiteLLM 1.93 wraps streams with continuation fallback even when
+    async def _acompletion_streaming_iterator(self, model_response, *args, **kwargs):
+        # LiteLLM wraps streams with continuation fallback even when
         # disable_fallbacks=True. Keep its adapters, but never splice model answers.
+        # Trailing arguments are tolerated rather than named: this is a private hook that
+        # has gained parameters between releases (``deployment_slot`` in 1.104), and
+        # spelling them here turns an upstream signature change into a broken stream.
         return model_response
 
 
