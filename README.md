@@ -173,6 +173,10 @@ that can satisfy the schema, after which the structured-output failure is return
 instead of prose. Caller-side invalid requests, context-window errors and safety refusals
 do not advance. Blank completions and pre-content incomplete streams also advance.
 All-blank exhaustion is 503.
+A provider whose attempt window expires without producing content is put into LiteLLM's
+deployment cooldown immediately, as is a provider still in flight when the shared budget
+runs out, so a sustained hang costs one attempt window rather than blocking the chain for
+every request. Caller disconnects are not charged to the provider.
 Lower timeouts can manufacture failover under normal provider latency; tune against
 measured latency, not intuition. Four enabled providers are not four independent infrastructure paths.
 

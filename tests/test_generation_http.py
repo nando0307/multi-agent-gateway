@@ -224,10 +224,10 @@ def test_research_callers_keep_their_own_budget(wire):
     gateway.settings.generation_deadline_s = 0.1
     gateway.settings.generation_attempt_s = 5
     modes["gemini"] = "slow"
-    with pytest.raises(GenerationDeadline):
-        asyncio.run(gateway.acomplete(MESSAGES, model="boss-default"))
     assert asyncio.run(gateway.acomplete(MESSAGES)).served_by == "gemini"
     assert gateway.complete(MESSAGES).served_by == "gemini"
+    with pytest.raises(GenerationDeadline):
+        asyncio.run(gateway.acomplete(MESSAGES, model="boss-default"))
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -237,12 +237,33 @@ def test_hanging_providers_are_cooled_after_a_wrapper_timeout(wire, stream):
     assert client.post("/v1/chat/completions",
                        json={**PAYLOAD, "stream": stream}).status_code == 200
     calls.clear()
-    gateway.router.allowed_fails = 0
     gateway.settings.generation_attempt_s = 0.2
     gateway.settings.generation_deadline_s = 8
     modes.update({"gemini": "slow", "openrouter": "slow"})
     response = client.post("/v1/chat/completions", json={**PAYLOAD, "stream": stream})
     assert response.status_code == 200, response.text
+    calls.clear()
+    response = client.post("/v1/chat/completions", json={**PAYLOAD, "stream": stream})
+    assert response.status_code == 200, response.text
+    assert calls == ["groq"]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_serial_requests_recover_under_shipped_budget_ratios(wire, stream):
+    """Attempt = deadline/2, as shipped (30 s/60 s): two hangs must still cool both tiers.
+
+    The second hanging tier is cut by the shared deadline rather than by its own window,
+    and the failure counter would expire between requests spaced a full budget apart, so
+    both accounting paths have to hold for the chain to reach the healthy backup.
+    """
+    gateway, client, modes, calls, _, _ = wire
+    assert client.post("/v1/chat/completions",
+                       json={**PAYLOAD, "stream": stream}).status_code == 200
+    calls.clear()
+    gateway.settings.generation_attempt_s = 0.2
+    gateway.settings.generation_deadline_s = 0.4
+    modes.update({"gemini": "slow", "openrouter": "slow"})
+    client.post("/v1/chat/completions", json={**PAYLOAD, "stream": stream})
     calls.clear()
     response = client.post("/v1/chat/completions", json={**PAYLOAD, "stream": stream})
     assert response.status_code == 200, response.text
@@ -287,6 +308,12 @@ def test_stream_disconnect_cancels_upstream(wire):
             if '"content"' in line:
                 break
     assert closed.wait(2), "Upstream connection was not closed after client disconnect"
+    assert calls == ["gemini"]
+    # A caller walking away is not a provider failure: gemini must stay selectable.
+    calls.clear()
+    modes["gemini"] = "ok"
+    response = client.post("/v1/chat/completions", json={**PAYLOAD, "stream": True})
+    assert "[DONE]" in response.text, response.text
     assert calls == ["gemini"]
 
 
@@ -364,6 +391,12 @@ def test_nonstream_disconnect_stops_fallback(wire):
 
     asyncio.run(disconnect())
     assert closed.wait(3), "Cancelled nonstream provider connection was left open"
+    assert calls == ["gemini"]
+    # A caller walking away is not a provider failure: gemini must stay selectable.
+    calls.clear()
+    modes["gemini"] = "ok"
+    response = client.post("/v1/chat/completions", json=PAYLOAD)
+    assert response.headers["x-gateway-provider"] == "gemini", response.text
     assert calls == ["gemini"]
 
 

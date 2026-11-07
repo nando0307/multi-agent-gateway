@@ -16,7 +16,6 @@ import litellm
 from anyio.from_thread import start_blocking_portal
 from jsonschema import Draft202012Validator, ValidationError
 from litellm import Router
-from litellm.router_utils.cooldown_handlers import _set_cooldown_deployments
 
 from gateway.llm.events import LLMAttempt, LLMCallRecord, get_trace
 from gateway.llm.model_list import BOSS_ALIASES, PRIMARY_ALIAS, build_model_list
@@ -173,20 +172,21 @@ class Gateway:
         return None, self.settings.request_timeout_s
 
     def _cool_down(self, provider, exc):
-        """Count a wrapper-enforced attempt expiry against the deployment.
+        """Cool the deployment for a provider attempt that produced nothing.
 
         Our attempt window cancels LiteLLM before its transport timeout, so its failure
-        handlers never see the failure; without this the Router would re-try a hanging
-        provider on every request.
+        handlers never see the failure, and its per-minute failure counter expires between
+        requests spaced by a full attempt window. The provider is therefore cooled here
+        directly, in the Router's own cooldown cache, which is also what the Router consults
+        when choosing a deployment.
         """
         deployment = next(e for e in self.model_list
                           if e["model_name"] == provider)["model_info"]["id"]
-        _set_cooldown_deployments(
-            litellm_router_instance=self.router,
+        self.router.cooldown_cache.add_deployment_to_cooldown(
+            model_id=deployment,
             original_exception=exc,
             exception_status=500,
-            deployment=deployment,
-            time_to_cooldown=self.settings.cooldown_time_s,
+            cooldown_time=self.settings.cooldown_time_s,
         )
 
     def _options(self, provider, messages, kwargs, remaining, attempt_s=None):
@@ -233,10 +233,11 @@ class Gateway:
             raise ValueError("Use astream for streaming generation")
         deadline_s, attempt_s = self._budget(model)
         started, call_id, attempts = time.monotonic(), uuid.uuid4().hex[:8], []
-        cause = None
+        cause, in_flight = None, None
         try:
             async with asyncio.timeout(deadline_s):
                 for provider in self._providers(model, kwargs.get("response_format")):
+                    in_flight = provider
                     attempt_start = time.monotonic()
                     remaining = (float("inf") if deadline_s is None
                                  else deadline_s - (attempt_start - started))
@@ -261,6 +262,7 @@ class Gateway:
                                         error_class=type(exc).__name__))
                         if isinstance(exc, TimeoutError):
                             self._cool_down(provider, exc)
+                        in_flight = None
                         if not retryable(exc):
                             raise
                         continue
@@ -274,6 +276,10 @@ class Gateway:
                     raise cause
                 raise AllProvidersExhausted(model, attempts, cause) from cause
         except TimeoutError as exc:
+            # The shared budget expired while this provider was still answering: it consumed
+            # what was left, so it is charged the failure rather than the caller.
+            if in_flight is not None:
+                self._cool_down(in_flight, exc)
             self._record_call(call_id, model, None, 0, (time.monotonic()-started)*1000,
                               attempts, error="GenerationDeadline")
             raise GenerationDeadline("Generation deadline exceeded") from exc
@@ -395,6 +401,12 @@ class Gateway:
                     raise IncompleteCompletion("Stream attempt timed out") from exc
                 if committed or not retryable(exc):
                     raise
+            except asyncio.CancelledError:
+                # Only the shared budget can cancel here; a caller or consumer cancelling
+                # the request is not the provider's failure.
+                if time.monotonic() >= started + self.settings.generation_deadline_s:
+                    self._cool_down(provider, GenerationDeadline("Generation deadline exceeded"))
+                raise
             finally:
                 if stream is not None:
                     await stream.aclose()
