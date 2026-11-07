@@ -57,7 +57,7 @@ class Settings(BaseSettings):
 
     openrouter_api_key: str | None = None
     openrouter_timeout_s: float = 30.0
-    # Pick an upstream vendor distinct from Gemini/NIM so the tiers fail
+    # Pick an upstream vendor distinct from Gemini, Groq and DeepSeek so the tiers fail
     # independently (PLAN.md Phase 1). Verify the slug against openrouter.ai/models.
     openrouter_model: str = "openrouter/mistralai/mistral-small-3.2-24b-instruct"
 

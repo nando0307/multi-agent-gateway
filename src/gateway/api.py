@@ -37,9 +37,9 @@ _UI = Path(__file__).resolve().parent / "static" / "index.html"
 def index() -> FileResponse:
     return FileResponse(_UI, media_type="text/html")
 
-# Worst-case fallback/retry chains can sum past any one client's timeout (multiple LLM
-# calls per request, each with its own retry ladder, plus several judge calls with their
-# own backoff). Without a server-side deadline the caller just hangs until it gives up on
+# Worst-case fallback chains can sum past any one client's timeout (multiple LLM
+# calls per request, each one walking the provider chain once, plus several judge calls
+# with their own backoff). Without a server-side deadline the caller just hangs until it gives up on
 # its own terms -- which is exactly what turned a single slow request into three garak runs
 # crashing outright (garak treats a raw connection timeout as fatal, unlike an HTTP status
 # it can skip). Bounding it here means a slow request fails fast and cleanly with a 504.

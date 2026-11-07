@@ -1,4 +1,8 @@
-"""Phase 1: measure each provider, then order the fallback chain from the result.
+"""Phase 1: measure each provider's latency and report the p95 order.
+
+This benchmark does not set the shipped serving order: that is approved in
+``model_list.py`` (``DEFAULT_CHAIN``) and documented in README.md. The p95 order below is
+the measurement's own recommendation, kept for the record.
 
 The ordering key is **p95, not p50**. Failover exists for the tail: a provider with an
 excellent median and a bad tail is a bad primary, because the tail is exactly when you
@@ -138,9 +142,12 @@ def main() -> int:
 
     lines += [
         "",
-        "## Chosen order",
+        "## Measured order (historical)",
         "",
         f"`{' -> '.join(order)}`",
+        "",
+        "The shipped serving order is approved in `model_list.py`, not derived here; README.md "
+        "owns it.",
         "",
         "Ordered by **mean p95**, not p50. Failover is a tail-latency mechanism: the case it "
         "exists for is the slow request, so a provider with a good median and a bad tail makes "

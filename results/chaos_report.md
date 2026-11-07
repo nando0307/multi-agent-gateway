@@ -2,6 +2,12 @@
 
 `n = 1000` requests per arm per fault rate · fault model = **sticky** · seed = 7 · chain = openrouter -> gemini -> groq -> nim
 
+Historical run: recorded against the OpenRouter-first p95 chain and a retrying baseline arm.
+The shipped serving order is Gemini -> OpenRouter -> Groq -> DeepSeek (README.md owns it) and
+both arms now take one bounded attempt per provider, so these numbers describe the chain that
+was measured, not the one that ships. Re-run `scripts/chaos_run.py --n 1000 --p 0.1 0.3 0.5`
+to republish them.
+
 Every tier is cloud-hosted and gets the same sticky fault model. There is no longer a local tier immune to rate limiting -- Groq replaced Ollama for speed -- so the residual rate here is genuinely bounded by all four providers failing together, not by an assumption about a backstop.
 
 Both arms see **identical** seeded faults and identical requests. The baseline is a single provider *with* retries (`num_retries=2`), not a strawman without them.
