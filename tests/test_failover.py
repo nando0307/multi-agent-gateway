@@ -6,11 +6,17 @@ lives in `scripts/chaos_run.py`; this file is what proves the mechanism works at
 """
 
 from __future__ import annotations
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
+
+import litellm
+from litellm.integrations.custom_logger import CustomLogger
 
 import pytest
 
 from gateway.llm.events import trace_run
-from gateway.llm.router import AllProvidersExhausted
+from gateway.llm.router import AllProvidersExhausted, Gateway
 from tests.conftest import EMPTY, FAIL_429, FAIL_500, DEFAULT_CHAIN, make_gateway
 
 
@@ -43,6 +49,67 @@ def test_all_providers_down_raises_cleanly_and_does_not_hang(messages):
     with pytest.raises(AllProvidersExhausted) as exc:
         gw.complete(messages)
     assert "research-primary" in str(exc.value)
+    # The CLI and /research only show str(exc); it must name what was tried.
+    assert "gemini:InternalServerError" in str(exc.value)
+
+
+def test_a_cooled_provider_advances_the_chain_instead_of_aborting_it(messages):
+    """A sustained outage must fail over, not answer 400 invalid_request.
+
+    After ``allowed_fails`` failures LiteLLM cools the deployment and starts raising
+    ``RouterRateLimitError`` (a ValueError with no status_code) for it. That is a provider
+    outage belonging to the same class as 429/5xx: the chain has to keep walking.
+    """
+    gw = make_gateway({"gemini": FAIL_500, "nim": FAIL_500})
+    errors = []
+    for _ in range(6):
+        result = gw.complete(messages)
+        assert result.served_by == "openrouter", result.attempts
+        errors.extend(attempt.error_class for attempt in result.attempts)
+    assert "RouterRateLimitError" in errors, errors
+
+
+def test_every_provider_cooled_is_exhaustion_not_a_client_error(messages):
+    gw = make_gateway({"gemini": FAIL_500, "openrouter": FAIL_500}, chain=("gemini", "openrouter"))
+    error = None
+    for _ in range(6):
+        try:
+            gw.complete(messages)
+        except AllProvidersExhausted as exc:
+            error = exc
+        else:
+            error = None
+    assert error is not None
+    assert [a.error_class for a in error.attempts] == ["RouterRateLimitError", "RouterRateLimitError"]
+
+
+def test_the_shipped_model_list_lets_the_router_cool_a_dead_provider(messages):
+    """allowed_fails/cooldown_time_s must bind on the shipped config, not just in fixtures.
+
+    LiteLLM treats its own default ``allowed_fails`` (3) as "unset" and switches to a
+    policy where a single-deployment group only cools after 1000 requests, and it treats a
+    model name that equals a deployment id as that one specific deployment, skipping the
+    cooldown filter entirely. Both would leave a dead primary re-attempted forever.
+    """
+    from gateway.llm.model_list import build_model_list
+    from gateway.settings import Settings
+
+    settings = Settings(_env_file=None, gemini_api_key="k", openrouter_api_key="k")
+    model_list, chain = build_model_list(settings)
+    assert chain == ("gemini", "openrouter")
+    for entry in model_list:
+        entry["litellm_params"] = {
+            "model": "openai/gpt-4o-mini", "api_key": "sk-test-not-real",
+            "mock_response": FAIL_500 if entry["model_name"] == "gemini"
+            else f"answer from {entry['model_name']}",
+        }
+    gw = Gateway(settings=settings, model_list=model_list)
+    errors = []
+    for _ in range(6):
+        result = gw.complete(messages)
+        assert result.served_by == "openrouter", result.attempts
+        errors.extend(attempt.error_class for attempt in result.attempts)
+    assert "RouterRateLimitError" in errors, errors
 
 
 def test_only_local_tier_survives(messages):
@@ -94,13 +161,6 @@ async def test_async_path_falls_back_too(messages):
     assert result.fallback_depth == 2
 
 
-def test_retries_are_attempted_before_falling_back(messages):
-    """num_retries>0 must not skip the fallback path when retries are also exhausted."""
-    gw = make_gateway({"gemini": FAIL_500}, num_retries=2)
-    result = gw.complete(messages)
-    assert result.served_by == "nim"
-
-
 def test_empty_completion_is_treated_as_failure_not_success(messages):
     """A 200 with no content is a failure HTTP status cannot see.
 
@@ -128,3 +188,34 @@ def test_empty_completion_is_recorded_on_the_trace(messages):
         gw.complete(messages)
     classes = [a.error_class for c in trace.llm_calls for a in c.attempts]
     assert "EmptyCompletion" in classes
+
+
+def test_concurrent_sync_async_calls_deliver_their_success_callbacks():
+    """Short-lived caller loops must not discard LiteLLM's queued callbacks."""
+    delivered = Queue()
+
+    class Recorder(CustomLogger):
+        async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):
+            delivered.put(kwargs["messages"][0]["content"])
+
+    recorder = Recorder()
+    litellm.callbacks.append(recorder)
+    gateway = make_gateway()
+    try:
+        def call(label, asynchronous):
+            messages = [{"role": "user", "content": label}]
+            if asynchronous:
+                return asyncio.run(gateway.acomplete(messages))
+            return gateway.complete(messages)
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = [pool.submit(call, f"callback-{index}", bool(index % 2)) for index in range(4)]
+            assert all(result.result(timeout=5).served_by == "gemini" for result in results)
+        expected = {f"callback-{index}" for index in range(4)}
+        seen = set()
+        while not expected <= seen:
+            # Other tests' callbacks can arrive late; only these four are the claim.
+            seen.add(delivered.get(timeout=5))
+        assert expected <= seen
+    finally:
+        litellm.callbacks.remove(recorder)

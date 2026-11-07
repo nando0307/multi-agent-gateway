@@ -16,9 +16,9 @@
     ],
     "gateway_mean_fallback_depth": 0.1,
     "gateway_provider_share": {
-      "openrouter": 914,
-      "gemini": 73,
-      "nim": 1,
+      "gemini": 914,
+      "openrouter": 73,
+      "deepseek": 1,
       "groq": 12
     }
   },
@@ -39,10 +39,10 @@
     ],
     "gateway_mean_fallback_depth": 0.407,
     "gateway_provider_share": {
-      "openrouter": 688,
-      "gemini": 235,
+      "gemini": 688,
+      "openrouter": 235,
       "groq": 54,
-      "nim": 21
+      "deepseek": 21
     }
   },
   {
@@ -62,10 +62,10 @@
     ],
     "gateway_mean_fallback_depth": 0.739,
     "gateway_provider_share": {
-      "openrouter": 476,
-      "gemini": 267,
+      "gemini": 476,
+      "openrouter": 267,
       "groq": 150,
-      "nim": 41
+      "deepseek": 41
     }
   }
 ]

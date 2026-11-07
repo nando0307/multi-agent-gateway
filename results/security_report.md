@@ -39,15 +39,22 @@ The two layers are not redundant. The scope gate stops every attack that needs a
 
 Produced by `scripts/run_security_scans.sh`; raw output in `results/bandit.txt` and
 `results/pip_audit.txt`. Both scans now gate: the script exits non-zero on either, and CI runs
-`pip-audit` without the `|| true` that previously made it unfailable.
+the same `scripts/audit_deps.sh` wrapper, so the local evidence file and the gate cannot
+disagree about what is accepted.
 
 | check | result |
 |---|---|
-| bandit `-ll` (medium/high) over 2229 LOC of `src/` | **no issues identified** |
+| bandit `-ll` (medium/high) over 2539 LOC of `src/` | **no issues identified** |
 | bandit, all severities | 2 low, both high-confidence (see below) |
-| pip-audit over the locked dependency set | **no known vulnerabilities** |
+| pip-audit over the locked dependency set | **no known vulnerabilities**, 12 ignored (see below) |
 | secret scan of tracked files | **clean** -- no key-shaped strings |
 | sentinel credential leakage (`tests/test_redaction.py`) | **0 leaks** |
+
+The audit's one accepted finding is `filelock`, ignored by ID in `scripts/audit_deps.sh`
+rather than by dropping the check: LiteLLM (every release to date) requires `filelock<4.0`
+and every fixed `filelock` is 4.x, so no installable version satisfies both. The exception
+is twelve explicit `--ignore-vuln` lines next to the reason, not a blanket bypass; it goes
+away when LiteLLM lifts the cap.
 
 The two low-severity bandit findings are recorded rather than suppressed:
 

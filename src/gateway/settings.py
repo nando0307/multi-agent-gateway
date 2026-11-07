@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -56,13 +57,25 @@ class Settings(BaseSettings):
 
     openrouter_api_key: str | None = None
     openrouter_timeout_s: float = 30.0
-    # Pick an upstream vendor distinct from Gemini/NIM so the tiers fail
+    # Pick an upstream vendor distinct from Gemini, Groq and DeepSeek so the tiers fail
     # independently (PLAN.md Phase 1). Verify the slug against openrouter.ai/models.
     openrouter_model: str = "openrouter/mistralai/mistral-small-3.2-24b-instruct"
 
     groq_api_key: str | None = None
-    groq_model: str = "groq/llama-3.3-70b-versatile"
+    groq_model: str = "groq/openai/gpt-oss-120b"
     groq_timeout_s: float = 60.0
+
+    deepseek_api_key: str | None = None
+    deepseek_model: str = "deepseek/deepseek-chat"
+    # At least the generation attempt window, or it silently becomes the real cap.
+    deepseek_timeout_s: float = 45.0
+
+    gateway_service_token: str | None = None
+    generation_deadline_s: float = Field(default=60.0, gt=0)
+    # Sized above the measured primary tail (results/latency.md: gemini p50 ~9.3 s,
+    # p95 ~23 s for a 200-word prompt). A window below the primary's own p95 answers
+    # normal tail latency by abandoning the healthy primary mid-answer.
+    generation_attempt_s: float = Field(default=30.0, gt=0)
 
     ollama_api_base: str = "http://localhost:11434"
     # 4b, not 9b. The 9b variant spends thousands of tokens reasoning before it answers --
@@ -100,14 +113,12 @@ class Settings(BaseSettings):
     judge_model: str = "claude-sonnet-5"
 
     # --- behaviour ---------------------------------------------------------------
-    # Global default, used only by providers without their own. Every timeout below is
-    # ~2x that provider's MEASURED p95 (results/latency.md), floored at 30s. A single
-    # global value cannot serve a 4.6s-p95 provider and a 138s-p95 one: set it low and NIM
-    # fails on its own normal tail, manufacturing failovers that are not real outages; set
-    # it high and a hung primary stalls every request before failover can help.
+    # Provider timeout default; generation attempt and total budgets always cap it.
     request_timeout_s: float = 45.0
-    num_retries: int = 2
-    allowed_fails: int = 3
+    # Not litellm's default of 3: that value is indistinguishable from "unset" there, which
+    # switches the Router to its error-rate policy, where a single-deployment group only
+    # cools after 1000 requests -- i.e. never during a real outage.
+    allowed_fails: int = 2
     cooldown_time_s: int = 60
     gate_threshold: float = 0.70
 

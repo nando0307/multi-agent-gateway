@@ -8,9 +8,11 @@ Runs per provider per label: 20. Labels recorded: morning. Identical 200-word re
 | nim | morning | 24116.1 | 138277.7 | 141763.5 | 0 | None |
 | openrouter | morning | 3320.6 | 4588.9 | 35764.6 | 0 | 0.000109 |
 
-## Chosen order
+## Measured order (historical)
 
 `openrouter -> gemini -> nim`
+
+The shipped serving order is approved in `model_list.py`, not derived here; README.md owns it.
 
 Ordered by **mean p95**, not p50. Failover is a tail-latency mechanism: the case it exists for is the slow request, so a provider with a good median and a bad tail makes a bad primary. p50 is shown for context and is not the ordering key.
 

@@ -1,5 +1,9 @@
 # Multi-Agent Research System — Build Plan
 
+> **Historical build log.** Dated entries below record the build as it happened and are not
+> retroactively updated when configuration changes. The live serving order, configuration and
+> contracts are owned by `README.md`.
+
 **Repo:** `~/dev/multi-agent-gateway/multi-agent-gateway/`
 **Stack:** LiteLLM (Router/failover) · LlamaIndex (agent workflow) · pytest · garak + bandit
 **Timeline:** 10 working days (1–2 weeks)
@@ -7,8 +11,9 @@
 ~40% as of 2026-07-30 17:00, promptinject.HijackHateHumans not yet started, baseline run + bandit/leak
 writeup still needed) · human label gate closed 2026-08-03, anchored not blind (see D5/Phase 6)
 **Last updated:** 2026-08-03
-**Providers (N=4):** Gemini · NVIDIA NIM · OpenRouter · Groq — *Azure OpenAI dropped, no access; Ollama
-dropped from the default chain 2026-07-28, see D3*
+**Providers (serving chain):** Gemini -> OpenRouter -> Groq -> DeepSeek — approved order owned by
+`README.md`; the historical N=4 chain listed NVIDIA NIM instead of DeepSeek (see D3). *Azure
+OpenAI dropped, no access; Ollama dropped from the default chain 2026-07-28, see D3*
 **Search:** Tavily (+ Parallel.ai fallback, added 2026-07-29) · **Judge:** `nvidia_nim/deepseek-ai/deepseek-v4-flash`
 (different model from every routed one; swapped from the paid `openrouter/openai/gpt-oss-120b` 2026-07-30
 after OpenRouter credits ran out — see Progress log; `judge_agreement.md` re-validated against it

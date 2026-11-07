@@ -92,7 +92,7 @@ class Judge:
         self.samples = samples
 
     # Free-tier judge models sit behind a shared, often-overloaded pool (unlike routed
-    # providers, which retry via litellm.Router). RateLimitError (429), Timeout, and
+    # providers, which advance to the next approved provider). RateLimitError (429), Timeout, and
     # InternalServerError (observed as a 529 "temporarily overloaded") are all normal
     # traffic for a free model, not an outage -- seen all three across different judge
     # models while chasing this.

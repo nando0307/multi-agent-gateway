@@ -5,9 +5,16 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "anyio>=4.4.0",
     "fastapi>=0.140.0",
     "httpx>=0.28.1",
-    "litellm>=1.93.0",
+    "jsonschema>=4.26.0",
+    # Pinned, not a range: the wrapper below exercises LiteLLM's private Router hooks
+    # (deployment cooldown, stream iterator), so an unflagged major bump silently changes
+    # failover behaviour. The pin has to clear disclosed advisories too -- 1.93 and older
+    # are covered by pip-audit findings. Bump deliberately and run
+    # `uv run pytest tests/test_generation_http.py tests/test_failover.py` with the result.
+    "litellm==1.104.0",
     "llama-index-core>=0.14.23",
     "pydantic-settings>=2.14.2",
     "pytest>=9.1.1",
