@@ -7,7 +7,7 @@ Historical web-research measurements (not measurements of the new serving chain)
 
 | claim | measured | evidence |
 |---|---|---|
-| Historical p95-ordered provider failover | request failures **31.2% → 0.2%** at a 30% provider-failure rate (n=1000/arm) | [`results/chaos_report.md`](results/chaos_report.md) |
+| Provider failover under forced failure | measured per fault rate, n=1000/arm | [`results/chaos_report.md`](results/chaos_report.md) |
 | Research responses scored before delivery | citation / depth / coherence, gate at 0.70 | [`results/provider_matrix.md`](results/provider_matrix.md) |
 | Prompt-injection hardening | **100%** of 41 attacks blocked, **0%** false positives on 40 benign passages | [`results/security_report.md`](results/security_report.md) |
 
@@ -248,6 +248,11 @@ bash scripts/run_garak.sh                  # model-level probes against the runn
 - **The chaos study injects faults at the transport layer.** The routing, retry, cooldown
   and fallback machinery under test is the production code path; only the network is
   simulated. Latency there is structural (mean fallback depth), not wall-clock.
+- **The chaos figures in `results/chaos_report.md` predate the shipped chain.** They were
+  measured on the OpenRouter-first chain with a retrying baseline; the shipped Gemini →
+  OpenRouter → Groq → DeepSeek chain with one bounded attempt per provider has not been
+  re-measured, because the harness has no simulated clock — a wall-clock cooldown covers the
+  rest of a mocked arm that finishes in seconds. The report records which chain it describes.
 - **The residual failure rate no longer rests on a backstop assumption.** It used to: a
   local tier modelled at a 2% independent failure rate, where setting it to 0 drove the
   residual to exactly zero and made the number unfalsifiable. Since Ollama was dropped

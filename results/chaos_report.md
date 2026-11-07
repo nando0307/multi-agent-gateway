@@ -5,8 +5,16 @@
 Historical run: recorded against the OpenRouter-first p95 chain and a retrying baseline arm.
 The shipped serving order is Gemini -> OpenRouter -> Groq -> DeepSeek (README.md owns it) and
 both arms now take one bounded attempt per provider, so these numbers describe the chain that
-was measured, not the one that ships. Re-run `scripts/chaos_run.py --n 1000 --p 0.1 0.3 0.5`
-to republish them.
+was measured, not the one that ships.
+
+The shipped chain has **not** been re-measured, and re-running `scripts/chaos_run.py` today
+does not produce a publishable number: the harness has no simulated clock, while provider
+cooldowns are wall-clock (30-60 s). A mocked arm finishes in seconds, so one cooldown entry
+covers every remaining request and the arm reports cooldown exhaustion as failover failure --
+measured on 2026-11-06 (`--n 1000 --p 0.1 0.3 0.5`): baseline 89.4% / gateway 61.7% failed at
+p=0.1, with the first failure at request 383 reporting `gemini:RouterRateLimitError`,
+`openrouter:...`, `groq:...` while all three were cooling. Give the harness a simulated clock
+before republishing these figures.
 
 Every tier is cloud-hosted and gets the same sticky fault model. There is no longer a local tier immune to rate limiting -- Groq replaced Ollama for speed -- so the residual rate here is genuinely bounded by all four providers failing together, not by an assumption about a backstop.
 
